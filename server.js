@@ -7,6 +7,7 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
+  Browsers,
   delay
 } = require("@whiskeysockets/baileys");
 
@@ -17,46 +18,68 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// Route to serve Web UI
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Endpoint: /pair?number=9471xxxxxxx
 app.get("/pair", async (req, res) => {
   let num = req.query.number;
   if (!num) return res.status(400).json({ error: "Phone number is required" });
 
   num = num.replace(/[^0-9]/g, "");
-  const tempId = `temp_${num}_${Date.now()}`;
+  
+  // කලින් හැදුනු temp sessions සම්පූර්ණයෙන්ම clear කිරීම
+  const tempId = `session_${num}`;
   const tempDir = path.join(__dirname, "temp", tempId);
+  if (fs.existsSync(tempDir)) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(tempDir);
-    const { version } = await fetchLatestBaileysVersion();
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    console.log(`Using WA v${version.join(".")}, isLatest: ${isLatest}`);
 
     const sock = makeWASocket({
       version,
-      logger: pino({ level: "silent" }),
+      logger: pino({ level: "fatal" }),
       printQRInTerminal: false,
       auth: state,
-      browser: ["NETH-UXMD (Chrome)", "Chrome", "130.0.6723.70"]
+      // Official WhatsApp Web Chrome Signature එක (Couldn't link device error එක එන්නේ නැති වෙන්න)
+      browser: Browsers.macOS("Chrome"),
+      syncFullHistory: false,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 0,
+      keepAliveIntervalMs: 10000
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    await delay(2000);
-    const rawCode = await sock.requestPairingCode(num);
-    const formattedCode = rawCode?.match(/.{1,4}/g)?.join("-") || rawCode;
+    let codeSent = false;
 
-    // Return Pairing Code to Frontend
-    res.json({ code: formattedCode });
-
-    // Handle Connection & Send NETH-UXMD Session to User WhatsApp
+    // Socket එක server එකට සම්බන්ධ වූ පසු පමණක් code එක ඉල්ලීම
     sock.ev.on("connection.update", async (update) => {
-      const { connection } = update;
+      const { connection, lastDisconnect } = update;
+
+      if (connection === "connecting" && !codeSent && !sock.authState.creds.registered) {
+        await delay(3000); // Server handshake එකට තත්පර 3ක් ඉඩ දීම
+        try {
+          const rawCode = await sock.requestPairingCode(num);
+          const formattedCode = rawCode?.match(/.{1,4}/g)?.join("-") || rawCode;
+          codeSent = true;
+          return res.json({ code: formattedCode });
+        } catch (err) {
+          console.error("Pair code error:", err.message);
+          if (!res.headersSent) {
+            return res.status(500).json({ error: "Pairing code request failed. Try again." });
+          }
+        }
+      }
+
       if (connection === "open") {
-        await delay(3000);
+        console.log(`✅ Device paired successfully for ${num}`);
+        await delay(2000);
+
         try {
           const credsPath = path.join(tempDir, "creds.json");
           if (fs.existsSync(credsPath)) {
@@ -65,29 +88,35 @@ app.get("/pair", async (req, res) => {
             const sessionId = `NETH-UXMD~${b64}`;
 
             const userJid = sock.user.id.split(":")[0] + "@s.whatsapp.net";
-            const sessionText = `👑 *QUEEN NETHU MD - SESSION ID* 👑\n\n` +
-              `*Device:* NETH-UXMD (Chrome Web)\n` +
+            const sessionText = `👑 *QUEEN NETHU MD CONNECTED* 👑\n\n` +
               `*Session Key:*\n\`\`\`${sessionId}\`\`\`\n\n` +
-              `⚠️ _Do not share this key with anyone!_`;
+              `⚠️ _මෙම Session Key එක වෙනත් කිසිවෙකුට ලබා නොදෙන්න._`;
 
             await sock.sendMessage(userJid, { text: sessionText });
           }
         } catch (e) {
           console.error("Session dispatch error:", e.message);
         } finally {
-          await delay(5000);
+          await delay(3000);
           await sock.end();
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
+      }
+
+      if (connection === "close") {
+        const reason = lastDisconnect?.error?.output?.statusCode;
+        console.log(`Connection closed: ${reason}`);
       }
     });
 
   } catch (err) {
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
-    res.status(500).json({ error: "Failed to create pair session. Please retry." });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error." });
+    }
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Queen Nethu Pair Site running on: http://localhost:${PORT}`);
+  console.log(`🚀 Queen Nethu Pair Server active on port: ${PORT}`);
 });
