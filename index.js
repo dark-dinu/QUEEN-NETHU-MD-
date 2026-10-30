@@ -8,9 +8,16 @@ const {
 const pino = require("pino");
 const fs = require("fs");
 const path = require("path");
-const readline = require("readline");
+const express = require("express");
 const config = require("./config");
 const { connectDB, getSettings } = require("./database/mongo");
+
+// Keep-Alive Web Server for Render
+const app = express();
+app.get("/", (req, res) => res.send(`👑 ${config.BOT_NAME} is active & running!`));
+app.listen(config.PORT, () => {
+  console.log(`🌐 Web server running on port ${config.PORT}`);
+});
 
 const commands = new Map();
 
@@ -38,9 +45,6 @@ function loadPlugins() {
   console.log(`🧩 Loaded ${commands.size} commands successfully.`);
 }
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const question = (text) => new Promise((resolve) => rl.question(text, resolve));
-
 async function startBot() {
   await connectDB();
   loadPlugins();
@@ -58,28 +62,28 @@ async function startBot() {
     syncFullHistory: false
   });
 
-  // Pairing Flow with Device Tag NETH-UXMD
+  // Direct Cloud Pairing Flow (No Terminal Input Needed)
   if (!sock.authState.creds.registered) {
     console.log(`\n=================================================`);
     console.log(`       👑 ${config.BOT_NAME} - INSTANT LINK        `);
-    console.log(`=================================================\n`);
+    console.log(`=================================================`);
 
-    let phoneNumber = await question("Enter WhatsApp Number (with Country Code, e.g. 94719845166): ");
-    phoneNumber = phoneNumber.replace(/[^0-9]/g, "");
+    const cleanNumber = String(config.PHONE_NUMBER).replace(/[^0-9]/g, "");
 
-    await delay(1500);
+    await delay(3000); // Wait for connection readiness
 
     try {
-      const code = await sock.requestPairingCode(phoneNumber);
+      const code = await sock.requestPairingCode(cleanNumber);
       const formattedCode = code?.match(/.{1,4}/g)?.join("-") || code;
 
       console.log(`\n=================================================`);
-      console.log(`DEVICE TAG    : \x1b[36m${config.DEVICE_NAME}\x1b[0m`);
+      console.log(`TARGET NUMBER : ${cleanNumber}`);
+      console.log(`DEVICE TAG    : ${config.DEVICE_NAME}`);
       console.log(`PAIRING CODE  : \x1b[32m\x1b[1m${formattedCode}\x1b[0m`);
       console.log(`=================================================`);
-      console.log(`WhatsApp Settings > Linked Devices > Link with Phone Number හරහා code එක enter කරන්න.\n`);
+      console.log(`WhatsApp > Linked Devices > Link with Phone Number හරහා ඉහත Code එක ඇතුළත් කරන්න.\n`);
     } catch (err) {
-      console.error("Pairing request failed:", err.message);
+      console.error("❌ Pairing request failed:", err.message);
     }
   }
 
@@ -93,7 +97,7 @@ async function startBot() {
     for (const msg of messages) {
       if (!msg.message) continue;
 
-      // Handle Status Updates
+      // Status Processing
       if (msg.key.remoteJid === "status@broadcast") {
         if (settings.autoStatusSeen) {
           await sock.readMessages([msg.key]);
@@ -111,7 +115,7 @@ async function startBot() {
         continue;
       }
 
-      // Handle Commands
+      // Command Execution
       const from = msg.key.remoteJid;
       const body = msg.message.conversation ||
                    msg.message.extendedTextMessage?.text ||
@@ -128,7 +132,7 @@ async function startBot() {
         try {
           await plugin.execute({ sock, msg, args, from, settings });
         } catch (err) {
-          console.error(`Command execution error (${cmdName}):`, err);
+          console.error(`Command error (${cmdName}):`, err);
         }
       }
     }
@@ -140,17 +144,17 @@ async function startBot() {
     if (connection === "close") {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`Connection closed (Code: ${statusCode}). Auto-reconnecting: ${shouldReconnect}`);
+      console.log(`Connection closed (Code: ${statusCode}). Reconnecting: ${shouldReconnect}`);
       if (shouldReconnect) startBot();
     } else if (connection === "open") {
-      console.log(`\n✅ ${config.BOT_NAME} CONNECTED AND ONLINE!`);
+      console.log(`\n✅ ${config.BOT_NAME} CONNECTED SUCCESSFULLY!`);
 
       const userJid = sock.user.id.split(":")[0] + "@s.whatsapp.net";
       const connectedAlert = `👑 *${config.BOT_NAME} CONNECTED* 👑\n\n` +
         `• *Device Identifier:* ${config.DEVICE_NAME} (Chrome)\n` +
         `• *Auto Status Seen:* 🟢 Active\n` +
         `• *Auto Status React:* 🟢 Active\n` +
-        `• *Database:* MongoDB Linked`;
+        `• *Database:* Synced`;
 
       await sock.sendMessage(userJid, { text: connectedAlert });
     }
