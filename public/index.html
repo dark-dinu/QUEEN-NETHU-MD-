@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QUEEN NETHU MD - PAIR SYSTEM</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    body {
+      background: radial-gradient(circle at top right, #1f0208, #050505 85%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      padding: 20px;
+    }
+    .card {
+      background: rgba(20, 20, 22, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 30, 86, 0.25);
+      box-shadow: 0 0 35px rgba(255, 0, 76, 0.18);
+      border-radius: 20px;
+      padding: 35px 25px;
+      width: 100%;
+      max-width: 440px;
+      text-align: center;
+    }
+    .badge {
+      display: inline-block;
+      padding: 5px 14px;
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      background: rgba(255, 30, 86, 0.15);
+      border: 1px solid #ff1e56;
+      border-radius: 50px;
+      color: #ff3366;
+      margin-bottom: 15px;
+      font-weight: 700;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+      color: #ffffff;
+    }
+    p.sub {
+      font-size: 13px;
+      color: #a0a0aa;
+      margin-bottom: 25px;
+    }
+    .input-box {
+      position: relative;
+      margin-bottom: 20px;
+    }
+    .input-box i {
+      position: absolute;
+      left: 15px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #ff1e56;
+      font-size: 16px;
+    }
+    input {
+      width: 100%;
+      background: rgba(10, 10, 12, 0.8);
+      border: 1px solid #333;
+      padding: 14px 14px 14px 44px;
+      border-radius: 12px;
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+      transition: 0.3s;
+    }
+    input:focus {
+      border-color: #ff1e56;
+      box-shadow: 0 0 10px rgba(255, 30, 86, 0.4);
+    }
+    button {
+      width: 100%;
+      background: linear-gradient(135deg, #ff1e56, #b80036);
+      color: #fff;
+      border: none;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: 0.3s;
+      box-shadow: 0 4px 15px rgba(255, 30, 86, 0.3);
+    }
+    button:hover {
+      background: linear-gradient(135deg, #ff3366, #d6003e);
+      transform: translateY(-2px);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .result-container {
+      margin-top: 25px;
+      display: none;
+      background: rgba(10, 10, 12, 0.85);
+      border: 1px dashed #ff1e56;
+      padding: 18px;
+      border-radius: 14px;
+    }
+    .code-title {
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .pair-code {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      color: #00ffaa;
+      cursor: pointer;
+      user-select: all;
+      display: inline-block;
+      margin-bottom: 10px;
+    }
+    .copy-hint {
+      font-size: 12px;
+      color: #aaa;
+    }
+    .loader {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 0.8s ease-in-out infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="badge">Device: NETH-UXMD</div>
+    <h1>QUEEN NETHU MD</h1>
+    <p class="sub">Link WhatsApp without QR Code using Pairing Code</p>
+
+    <div class="input-box">
+      <i class="fa-solid fa-phone"></i>
+      <input type="text" id="phone" placeholder="9471xxxxxxx (with country code)">
+    </div>
+
+    <button id="btn" onclick="getPairCode()">
+      <span id="btn-text">Get Pairing Code</span>
+      <div class="loader" id="loader"></div>
+    </button>
+
+    <div class="result-container" id="result-box">
+      <div class="code-title">Your Pairing Code</div>
+      <div class="pair-code" id="pair-display" onclick="copyCode()">---- ----</div>
+      <div class="copy-hint" id="copy-msg"><i class="fa-regular fa-copy"></i> Click code to copy</div>
+    </div>
+  </div>
+
+  <script>
+    async function getPairCode() {
+      const phoneInput = document.getElementById("phone");
+      const btn = document.getElementById("btn");
+      const btnText = document.getElementById("btn-text");
+      const loader = document.getElementById("loader");
+      const resultBox = document.getElementById("result-box");
+      const pairDisplay = document.getElementById("pair-display");
+
+      let number = phoneInput.value.replace(/[^0-9]/g, "");
+
+      if (!number || number.length < 10) {
+        alert("Please enter a valid phone number with country code!");
+        return;
+      }
+
+      btn.disabled = true;
+      btnText.style.display = "none";
+      loader.style.display = "block";
+      resultBox.style.display = "none";
+
+      try {
+        const response = await fetch(`/pair?number=${number}`);
+        const data = await response.json();
+
+        if (data.code) {
+          pairDisplay.innerText = data.code;
+          resultBox.style.display = "block";
+        } else {
+          alert(data.error || "Failed to generate pairing code.");
+        }
+      } catch (err) {
+        alert("Network or Server error! Try again.");
+      } finally {
+        btn.disabled = false;
+        btnText.style.display = "block";
+        loader.style.display = "none";
+      }
+    }
+
+    function copyCode() {
+      const code = document.getElementById("pair-display").innerText;
+      navigator.clipboard.writeText(code);
+      const copyMsg = document.getElementById("copy-msg");
+      copyMsg.innerHTML = "✅ Copied to Clipboard!";
+      setTimeout(() => {
+        copyMsg.innerHTML = '<i class="fa-regular fa-copy"></i> Click code to copy';
+      }, 2500);
+    }
+  </script>
+</body>
+</html>
