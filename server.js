@@ -7,7 +7,6 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  Browsers,
   delay
 } = require("@whiskeysockets/baileys");
 
@@ -28,57 +27,60 @@ app.get("/pair", async (req, res) => {
 
   num = num.replace(/[^0-9]/g, "");
   
-  // කලින් හැදුනු temp sessions සම්පූර්ණයෙන්ම clear කිරීම
-  const tempId = `session_${num}`;
-  const tempDir = path.join(__dirname, "temp", tempId);
+  // කලින් අසාර්ථක වූ temp session එක clean කිරීම
+  const tempDir = path.join(__dirname, "temp", `session_${num}`);
   if (fs.existsSync(tempDir)) {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(tempDir);
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-    console.log(`Using WA v${version.join(".")}, isLatest: ${isLatest}`);
+    const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
       version,
-      logger: pino({ level: "fatal" }),
+      logger: pino({ level: "silent" }),
       printQRInTerminal: false,
       auth: state,
-      // Official WhatsApp Web Chrome Signature එක (Couldn't link device error එක එන්නේ නැති වෙන්න)
-      browser: Browsers.macOS("Chrome"),
+      // "Logging in..." එක හිර නොවී ක්ෂණිකව handshake එක complete වීමට Ubuntu Chrome යොදන්න
+      browser: ["Ubuntu", "Chrome", "20.0.04"],
       syncFullHistory: false,
       connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 0,
-      keepAliveIntervalMs: 10000
+      keepAliveIntervalMs: 25000,
+      emitOwnEvents: true,
+      fireInitQueries: true,
+      generateHighQualityLinkPreview: true
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    let codeSent = false;
+    let hasResponded = false;
 
-    // Socket එක server එකට සම්බන්ධ වූ පසු පමණක් code එක ඉල්ලීම
-    sock.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect } = update;
-
-      if (connection === "connecting" && !codeSent && !sock.authState.creds.registered) {
-        await delay(3000); // Server handshake එකට තත්පර 3ක් ඉඩ දීම
+    // Code එක request කිරීම
+    setTimeout(async () => {
+      if (!sock.authState.creds.registered && !hasResponded) {
         try {
           const rawCode = await sock.requestPairingCode(num);
           const formattedCode = rawCode?.match(/.{1,4}/g)?.join("-") || rawCode;
-          codeSent = true;
+          hasResponded = true;
           return res.json({ code: formattedCode });
         } catch (err) {
-          console.error("Pair code error:", err.message);
-          if (!res.headersSent) {
-            return res.status(500).json({ error: "Pairing code request failed. Try again." });
+          console.error("Code Generation Error:", err.message);
+          if (!hasResponded) {
+            hasResponded = true;
+            return res.status(500).json({ error: "Code generation timeout. Please retry." });
           }
         }
       }
+    }, 4000); // Server handshake එකට තත්පර 4ක් සම්පූර්ණයෙන් ලබා දීම
+
+    // WhatsApp Authentication Event
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect } = update;
 
       if (connection === "open") {
-        console.log(`✅ Device paired successfully for ${num}`);
-        await delay(2000);
+        console.log(`✅ Handshake complete. Connected to WhatsApp!`);
+        await delay(3000);
 
         try {
           const credsPath = path.join(tempDir, "creds.json");
@@ -88,16 +90,16 @@ app.get("/pair", async (req, res) => {
             const sessionId = `NETH-UXMD~${b64}`;
 
             const userJid = sock.user.id.split(":")[0] + "@s.whatsapp.net";
-            const sessionText = `👑 *QUEEN NETHU MD CONNECTED* 👑\n\n` +
+            const sessionText = `👑 *QUEEN NETHU MD - LOGIN SUCCESS* 👑\n\n` +
               `*Session Key:*\n\`\`\`${sessionId}\`\`\`\n\n` +
-              `⚠️ _මෙම Session Key එක වෙනත් කිසිවෙකුට ලබා නොදෙන්න._`;
+              `⚠️ _මෙම Session ID එක සුරක්ෂිතව තබාගන්න._`;
 
             await sock.sendMessage(userJid, { text: sessionText });
           }
         } catch (e) {
           console.error("Session dispatch error:", e.message);
         } finally {
-          await delay(3000);
+          await delay(2000);
           await sock.end();
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -105,18 +107,18 @@ app.get("/pair", async (req, res) => {
 
       if (connection === "close") {
         const reason = lastDisconnect?.error?.output?.statusCode;
-        console.log(`Connection closed: ${reason}`);
+        console.log(`Connection closed with code: ${reason}`);
       }
     });
 
   } catch (err) {
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
     if (!res.headersSent) {
-      res.status(500).json({ error: "Internal server error." });
+      res.status(500).json({ error: "Failed to initialize socket." });
     }
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Queen Nethu Pair Server active on port: ${PORT}`);
+  console.log(`🚀 Queen Nethu Server running on port ${PORT}`);
 });
