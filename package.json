@@ -1,17 +1,15 @@
 {
-  "name": "queen-nethu-md",
-  "version": "3.0.0",
-  "description": "Ultra fast modular Baileys bot with Status Seen, React and Mongo sync",
-  "main": "index.js",
+  "name": "queen-nethu-pair-site",
+  "version": "1.0.0",
+  "description": "Dynamic Web Pairing Code Generator for QUEEN NETHU MD",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
-    "chalk": "^4.1.2",
-    "dotenv": "^16.4.5",
+    "cors": "^2.8.5",
     "express": "^4.19.2",
-    "mongoose": "^8.3.0",
     "pino": "^9.0.0"
   }
 }
