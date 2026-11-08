@@ -5,12 +5,13 @@ const {
   default: makeWASocket,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  proto
+  proto,
+  Browsers
 } = require("@whiskeysockets/baileys");
 const config = require("./config");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || config.PORT || 3000;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -95,7 +96,7 @@ async function useFastMongoAuthState() {
   };
 }
 
-// 🌐 Modern Glassmorphism Web UI
+// Web UI
 app.get("/", (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -108,7 +109,7 @@ app.get("/", (req, res) => {
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
     body {
-      background: linear-gradient(135deg, #0f172a, #1e1b4b);
+      background: radial-gradient(circle at center, #1e1b4b, #0f172a);
       color: #fff;
       display: flex;
       justify-content: center;
@@ -117,40 +118,40 @@ app.get("/", (req, res) => {
       padding: 20px;
     }
     .card {
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(16px);
-      padding: 35px 30px;
-      border-radius: 20px;
+      backdrop-filter: blur(20px);
+      padding: 40px 30px;
+      border-radius: 24px;
       max-width: 440px;
       width: 100%;
       text-align: center;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
     }
-    h1 { font-size: 24px; font-weight: 700; color: #a855f7; margin-bottom: 8px; }
+    h1 { font-size: 26px; font-weight: 700; color: #c084fc; margin-bottom: 6px; }
     p { font-size: 13px; color: #94a3b8; margin-bottom: 25px; }
     .input-group { text-align: left; margin-bottom: 20px; }
-    label { font-size: 12px; color: #cbd5e1; display: block; margin-bottom: 6px; font-weight: 600; }
+    label { font-size: 13px; color: #e2e8f0; display: block; margin-bottom: 8px; font-weight: 500; }
     input {
       width: 100%;
       padding: 14px;
-      background: rgba(15, 23, 42, 0.7);
+      background: rgba(15, 23, 42, 0.6);
       border: 1px solid #334155;
-      border-radius: 10px;
+      border-radius: 12px;
       color: #fff;
-      font-size: 15px;
+      font-size: 16px;
       outline: none;
-      transition: border 0.3s;
+      transition: all 0.3s;
     }
-    input:focus { border-color: #a855f7; }
+    input:focus { border-color: #a855f7; box-shadow: 0 0 10px rgba(168, 85, 247, 0.3); }
     button {
       width: 100%;
       padding: 14px;
       background: linear-gradient(135deg, #a855f7, #6366f1);
       color: white;
       border: none;
-      border-radius: 10px;
-      font-size: 15px;
+      border-radius: 12px;
+      font-size: 16px;
       font-weight: 600;
       cursor: pointer;
       transition: transform 0.2s, opacity 0.2s;
@@ -158,17 +159,17 @@ app.get("/", (req, res) => {
     button:active { transform: scale(0.98); }
     .code-box {
       margin-top: 25px;
-      background: rgba(0, 0, 0, 0.4);
-      padding: 18px;
-      border-radius: 12px;
-      border: 1px dashed #a855f7;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 20px;
+      border-radius: 14px;
+      border: 1px dashed #c084fc;
       display: none;
     }
     .code-box span {
       display: block;
-      font-size: 26px;
+      font-size: 28px;
       font-weight: 700;
-      letter-spacing: 5px;
+      letter-spacing: 6px;
       color: #38bdf8;
       cursor: pointer;
     }
@@ -178,19 +179,19 @@ app.get("/", (req, res) => {
 <body>
   <div class="card">
     <h1>QUEEN NETHU MD</h1>
-    <p>Link your WhatsApp account via Pairing Code</p>
+    <p>Link directly using Official Chrome Pairing</p>
 
     <div class="input-group">
-      <label>Country Code + Phone Number</label>
-      <input type="text" id="phone" placeholder="947xxxxxxxx" />
+      <label>WhatsApp Number (With Country Code)</label>
+      <input type="text" id="phone" placeholder="e.g. 94719845166" />
     </div>
 
     <button id="submitBtn" onclick="getCode()">Get Pairing Code</button>
 
     <div class="code-box" id="codeBox">
-      <div style="font-size: 12px; margin-bottom: 5px; color: #cbd5e1;">Tap to copy your code:</div>
+      <div style="font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Click code to copy:</div>
       <span id="pairCode" onclick="copyCode()">--------</span>
-      <div class="status" id="statusText">Enter this code on WhatsApp notification</div>
+      <div class="status" id="statusText">Enter code immediately on your phone!</div>
     </div>
   </div>
 
@@ -201,15 +202,14 @@ app.get("/", (req, res) => {
       const btn = document.getElementById('submitBtn');
       const codeBox = document.getElementById('codeBox');
       const pairCode = document.getElementById('pairCode');
-      const statusText = document.getElementById('statusText');
 
       if (!num || num.length < 10) {
-        alert("කරුණාකර රටේ කේතය (Country Code) සහිත නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න.");
+        alert("කරුණාකර Country Code එක සහිත නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න (උදා: 94719845166).");
         return;
       }
 
       btn.disabled = true;
-      btn.innerText = "Connecting...";
+      btn.innerText = "Requesting Code...";
       codeBox.style.display = "none";
 
       try {
@@ -219,8 +219,7 @@ app.get("/", (req, res) => {
         if (data.code) {
           pairCode.innerText = data.code;
           codeBox.style.display = "block";
-          statusText.innerText = "WhatsApp -> Linked Devices -> Link with phone number";
-          btn.innerText = "Get Pairing Code";
+          btn.innerText = "Get New Code";
           btn.disabled = false;
         } else {
           alert(data.error || "Failed to generate pairing code.");
@@ -228,16 +227,16 @@ app.get("/", (req, res) => {
           btn.disabled = false;
         }
       } catch (err) {
-        alert("Server communication error.");
+        alert("Server error. Check server logs.");
         btn.innerText = "Try Again";
         btn.disabled = false;
       }
     }
 
     function copyCode() {
-      const code = document.getElementById('pairCode').innerText;
+      const code = document.getElementById('pairCode').innerText.replace(/-/g, '');
       navigator.clipboard.writeText(code);
-      alert("Code Copied: " + code);
+      alert("Copied to clipboard: " + code);
     }
   </script>
 </body>
@@ -245,7 +244,7 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ⚡ Fast Pairing Endpoint
+// Pairing Endpoint
 app.get("/code", async (req, res) => {
   let num = req.query.number;
   if (!num) return res.status(400).json({ error: "Phone number required" });
@@ -259,29 +258,40 @@ app.get("/code", async (req, res) => {
       version,
       logger: pino({ level: "fatal" }),
       auth: state,
-      browser: ["QUEEN-NETHU-MD", "Chrome", "130.0.6723.117"],
-      syncFullHistory: false
+      // Official Ubuntu Chrome browser signature - prevents WhatsApp rejection
+      browser: Browsers.ubuntu("Chrome"),
+      syncFullHistory: false,
+      markOnlineOnConnect: true,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 0
     });
 
     sock.ev.on("creds.update", saveCreds);
 
     if (!sock.authState.creds.registered) {
+      // 1.5 seconds wait for socket stabilization before requesting code
       setTimeout(async () => {
         try {
-          const code = await sock.requestPairingCode(num);
-          return res.json({ code: code?.match(/.{1,4}/g)?.join("-") || code });
+          let code = await sock.requestPairingCode(num);
+          code = code?.match(/.{1,4}/g)?.join("-") || code;
+          return res.json({ code });
         } catch (err) {
-          return res.status(500).json({ error: "Failed to request code. Try again." });
+          console.error("Pairing Error:", err);
+          return res.status(500).json({ error: "Failed to request code. Check number format." });
         }
-      }, 3000);
+      }, 1500);
     } else {
-      return res.json({ error: "Device already registered. Delete DB to re-link." });
+      return res.json({ error: "Session already registered! Delete MongoDB data to re-link." });
     }
 
     sock.ev.on("connection.update", async (update) => {
-      const { connection } = update;
+      const { connection, lastDisconnect } = update;
       if (connection === "open") {
-        console.log("🎉 Linked Successfully to WhatsApp via Web!");
+        console.log("🎉 WhatsApp Linked Successfully via Web Pairing!");
+      }
+      if (connection === "close") {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        console.log(`Connection closed with code: ${statusCode}`);
       }
     });
 
@@ -293,9 +303,9 @@ app.get("/code", async (req, res) => {
 
 async function main() {
   await mongoose.connect(config.MONGO_URI, { maxPoolSize: 20 });
-  console.log("⚡ MongoDB Connected to Web Server");
+  console.log("⚡ MongoDB Connected to Pairing Server");
   app.listen(PORT, () => {
-    console.log(`🌐 Pairing Web Server Live on http://localhost:${PORT}`);
+    console.log(`🌐 Pairing Web Server Live on Port ${PORT}`);
   });
 }
 
