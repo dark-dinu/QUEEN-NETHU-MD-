@@ -1,7 +1,7 @@
 {
   "name": "queen-nethu-md",
-  "version": "2.3.0",
-  "description": "QUEEN NETHU MD Ultra Fast with Integrated Web Pairing",
+  "version": "2.4.0",
+  "description": "QUEEN NETHU MD Ultra Fast Multi-Device WhatsApp Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
