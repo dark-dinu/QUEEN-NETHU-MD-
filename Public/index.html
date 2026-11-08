@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="si">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatsApp Bot Pair</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --text:#111827; --muted:#6b7280; --accent:#16a34a; --border:#d1d5db; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b0f14; --card:#151b23; --text:#f3f4f6; --muted:#9ca3af; --accent:#22c55e; --border:#2a323d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:16px; }
+  .card { width:100%; max-width:380px; background:var(--card); border:1px solid var(--border);
+          border-radius:16px; padding:24px; text-align:center; }
+  h1 { font-size:20px; margin:0 0 6px; }
+  p { color:var(--muted); font-size:14px; margin:0 0 18px; }
+  input { width:100%; padding:14px; font-size:16px; border-radius:10px; border:1px solid var(--border);
+          background:var(--bg); color:var(--text); text-align:center; }
+  button { width:100%; margin-top:12px; padding:14px; font-size:16px; font-weight:600; border:0;
+           border-radius:10px; background:var(--accent); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; }
+  #code { font-size:32px; letter-spacing:4px; font-weight:700; margin:18px 0 6px; font-family:ui-monospace,monospace; }
+  #msg { font-size:14px; color:var(--muted); min-height:20px; }
+  #stats { margin-top:16px; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>🤖 WhatsApp Bot Pair</h1>
+    <p>ඔයාගේ number එක දාලා Pairing Code එක ගන්න</p>
+    <input id="num" type="tel" inputmode="numeric" placeholder="94771234567" autocomplete="off">
+    <button id="btn" onclick="pair()">Get Pairing Code</button>
+    <div id="code"></div>
+    <div id="msg"></div>
+    <div id="stats"></div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let timer = null;
+
+  async function pair() {
+    const n = $('num').value.replace(/\D/g, '');
+    if (n.length < 8) { $('msg').textContent = 'Country code එක්ක number එක දාන්න (+ නැතුව)'; return; }
+    clearInterval(timer);
+    $('btn').disabled = true;
+    $('code').textContent = '';
+    $('msg').textContent = 'Code එක හදනවා...';
+    try {
+      const r = await fetch('/api/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: n })
+      });
+      const d = await r.json();
+      if (!r.ok) { $('msg').textContent = d.error || 'Error'; $('btn').disabled = false; return; }
+      $('code').textContent = d.code.match(/.{1,4}/g).join('-');
+      $('msg').textContent = 'WhatsApp > Linked devices > Link with phone number > code එක දාන්න';
+      poll(n);
+    } catch (e) {
+      $('msg').textContent = 'Network error. නැවත උත්සාහ කරන්න.';
+      $('btn').disabled = false;
+    }
+  }
+
+  function poll(n) {
+    let tries = 0;
+    timer = setInterval(async () => {
+      tries++;
+      try {
+        const r = await fetch('/api/status/' + n);
+        const d = await r.json();
+        if (d.status === 'open') {
+          clearInterval(timer);
+          $('code').textContent = '✅';
+          $('msg').textContent = 'Connected! Bot ready. WhatsApp එකේ .ping ගහලා බලන්න.';
+          $('btn').disabled = false;
+        } else if (d.status === 'none' || tries > 70) {
+          clearInterval(timer);
+          $('msg').textContent = 'Code එක expire වුනා. නැවත උත්සාහ කරන්න.';
+          $('btn').disabled = false;
+        }
+      } catch (e) {}
+    }, 3000);
+  }
+
+  fetch('/api/stats').then((r) => r.json()).then((d) => {
+    $('stats').textContent = 'Active bots: ' + d.active;
+  }).catch(() => {});
+</script>
+</body>
+</html>
