@@ -1,13 +1,14 @@
 {
   "name": "queen-nethu-md",
-  "version": "2.2.0",
-  "description": "QUEEN NETHU MD Ultra Fast WhatsApp Bot",
+  "version": "2.3.0",
+  "description": "QUEEN NETHU MD Ultra Fast with Integrated Web Pairing",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.8",
+    "express": "^4.19.2",
     "mongoose": "^8.2.0",
     "pino": "^8.19.0"
   }
