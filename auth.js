@@ -21,7 +21,6 @@ async function useMongoAuthState() {
       }
       return value;
     });
-    // Non-blocking background sync
     AuthModel.updateOne({ id }, { data: serialized }, { upsert: true }).catch(() => {});
   };
 
