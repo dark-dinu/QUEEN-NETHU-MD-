@@ -1,6 +1,6 @@
 module.exports = {
   name: "ping",
-  description: "Check ultra-fast latency",
+  description: "Check bot speed",
   execute: async (sock, msg, from) => {
     const start = process.hrtime();
     const sent = await sock.sendMessage(from, { text: "⚡ *Testing Speed...*" }, { quoted: msg });
@@ -10,7 +10,7 @@ module.exports = {
     await sock.sendMessage(
       from,
       {
-        text: `⚡ *QUEEN NETHU MD ULTRA SPEED*\n\n🚀 *Latency:* \`${latency} ms\`\n💾 *Engine:* Baileys Multi-Device (Cached)\n🌐 *Platform:* Linux / Node.js`,
+        text: `⚡ *QUEEN NETHU MD ULTRA SPEED*\n\n🚀 *Response:* \`${latency} ms\`\n👑 *Owner:* Dinidu Heshan\n💾 *Database:* MongoDB Atlas\n🌐 *Engine:* Chrome Multi-Device`,
         edit: sent.key
       }
     );
