@@ -1,164 +1,80 @@
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  delay
-} = require("@whiskeysockets/baileys");
-const pino = require("pino");
-const fs = require("fs");
-const path = require("path");
-const express = require("express");
-const config = require("./config");
-const { connectDB, getSettings } = require("./database/mongo");
+const express = require('express');
+const path = require('path');
+const { MongoClient } = require('mongodb');
+const cfg = require('./config');
+const manager = require('./botManager');
 
-// Keep-Alive Web Server for Render
 const app = express();
-app.get("/", (req, res) => res.send(`👑 ${config.BOT_NAME} is active & running!`));
-app.listen(config.PORT, () => {
-  console.log(`🌐 Web server running on port ${config.PORT}`);
+app.set('trust proxy', true);
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ---- සරල rate limit: IP එකකට විනාඩි 10කට 5 වතාවක් ----
+const hits = new Map();
+function rateLimit(req, res, next) {
+  const now = Date.now();
+  const arr = (hits.get(req.ip) || []).filter((t) => now - t < 10 * 60 * 1000);
+  if (arr.length >= 5) return sudo delete my account(429).json({ error: 'Too many requests. විනාඩි කිහිපයකින් උත්සාහ කරන්න.' });
+  arr.push(now);
+  hits.set(req.ip, arr);
+  next();
+}
+setInterval(() => hits.clear(), 60 * 60 * 1000).unref();
+
+app.post('/api/pair', rateLimit, async (req, res) => {
+  const number = String(req.body?.number || '').replace(/\D/g, '');
+  if (number.length < 8 || number.length > 15) {
+    return res.status(400).json({ error: 'Country code එක්ක number එක දාන්න (උදා: 94771234567)' });
+  }
+  try {
+    const code = await manager.pair(number);
+    res.json({ code });
+  } catch (e) {
+    console.error('pair error:', e.message);
+    res.status(400).json({ error: e.message || 'Pair failed' });
+  }
 });
 
-const commands = new Map();
+app.get('/api/status/:number', (req, res) => {
+  res.json({ status: manager.getStatus(req.params.number.replace(/\D/g, '')) });
+});
 
-function loadPlugins() {
-  const pluginDir = path.join(__dirname, "plugins");
-  if (!fs.existsSync(pluginDir)) fs.mkdirSync(pluginDir);
+app.get('/api/stats', (req, res) => {
+  res.json({ active: manager.activeCount(), loaded: manager.total(), max: cfg.MAX_BOTS });
+});
 
-  const files = fs.readdirSync(pluginDir).filter(file => file.endsWith(".js"));
-  commands.clear();
+app.get('/health', (req, res) => res.send('ok'));
 
-  for (const file of files) {
-    try {
-      delete require.cache[require.resolve(path.join(pluginDir, file))];
-      const plugin = require(path.join(pluginDir, file));
-      if (plugin.command && typeof plugin.execute === "function") {
-        commands.set(plugin.command.toLowerCase(), plugin);
-        if (plugin.aliases && Array.isArray(plugin.aliases)) {
-          plugin.aliases.forEach(alias => commands.set(alias.toLowerCase(), plugin));
-        }
-      }
-    } catch (e) {
-      console.error(`❌ Error loading plugin ${file}:`, e.message);
-    }
-  }
-  console.log(`🧩 Loaded ${commands.size} commands successfully.`);
-}
+(async () => {
+  const client = new MongoClient(cfg.MONGO_URI, { maxPoolSize: 50 });
+  await client.connect();
+  console.log('✅ MongoDB connected');
 
-async function startBot() {
-  await connectDB();
-  loadPlugins();
+  const db = client.db(cfg.DB_NAME);
+  const cols = {
+    auth: db.collection('auth'),
+    settings: db.collection('settings'),
+    bots: db.collection('bots'),
+  };
+  await cols.auth.createIndex({ session: 1 });
+  await cols.bots.createIndex({ owner: 1, registered: 1 });
 
-  const sessionDir = path.join(__dirname, "session");
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-  const { version } = await fetchLatestBaileysVersion();
+  manager.init(cols);
 
-  const sock = makeWASocket({
-    version,
-    logger: pino({ level: "silent" }),
-    printQRInTerminal: false,
-    auth: state,
-    browser: config.BROWSER,
-    syncFullHistory: false
-  });
+  app.listen(cfg.PORT, () => console.log(`🌐 Pair site: http://localhost:${cfg.PORT}`));
+  manager.loadAll().catch((e) => console.error('loadAll error:', e));
 
-  // Direct Cloud Pairing Flow (No Terminal Input Needed)
-  if (!sock.authState.creds.registered) {
-    console.log(`\n=================================================`);
-    console.log(`       👑 ${config.BOT_NAME} - INSTANT LINK        `);
-    console.log(`=================================================`);
+  const stop = async () => {
+    await manager.shutdown();
+    await client.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+})().catch((e) => {
+  console.error('Fatal:', e);
+  process.exit(1);
+});
 
-    const cleanNumber = String(config.PHONE_NUMBER).replace(/[^0-9]/g, "");
-
-    await delay(3000); // Wait for connection readiness
-
-    try {
-      const code = await sock.requestPairingCode(cleanNumber);
-      const formattedCode = code?.match(/.{1,4}/g)?.join("-") || code;
-
-      console.log(`\n=================================================`);
-      console.log(`TARGET NUMBER : ${cleanNumber}`);
-      console.log(`DEVICE TAG    : ${config.DEVICE_NAME}`);
-      console.log(`PAIRING CODE  : \x1b[32m\x1b[1m${formattedCode}\x1b[0m`);
-      console.log(`=================================================`);
-      console.log(`WhatsApp > Linked Devices > Link with Phone Number හරහා ඉහත Code එක ඇතුළත් කරන්න.\n`);
-    } catch (err) {
-      console.error("❌ Pairing request failed:", err.message);
-    }
-  }
-
-  sock.ev.on("creds.update", saveCreds);
-
-  // Status Auto Seen & Auto React
-  sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify") return;
-    const settings = await getSettings();
-
-    for (const msg of messages) {
-      if (!msg.message) continue;
-
-      // Status Processing
-      if (msg.key.remoteJid === "status@broadcast") {
-        if (settings.autoStatusSeen) {
-          await sock.readMessages([msg.key]);
-        }
-
-        if (settings.autoStatusReact && settings.reactions.length > 0) {
-          const randomEmoji = settings.reactions[Math.floor(Math.random() * settings.reactions.length)];
-          await sock.sendMessage("status@broadcast", {
-            react: {
-              text: randomEmoji,
-              key: msg.key
-            }
-          }, { statusJidList: [msg.key.participant] });
-        }
-        continue;
-      }
-
-      // Command Execution
-      const from = msg.key.remoteJid;
-      const body = msg.message.conversation ||
-                   msg.message.extendedTextMessage?.text ||
-                   msg.message.imageMessage?.caption ||
-                   "";
-
-      if (!body.startsWith(settings.prefix)) continue;
-
-      const args = body.slice(settings.prefix.length).trim().split(/ +/);
-      const cmdName = args.shift().toLowerCase();
-      const plugin = commands.get(cmdName);
-
-      if (plugin) {
-        try {
-          await plugin.execute({ sock, msg, args, from, settings });
-        } catch (err) {
-          console.error(`Command error (${cmdName}):`, err);
-        }
-      }
-    }
-  });
-
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect } = update;
-
-    if (connection === "close") {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`Connection closed (Code: ${statusCode}). Reconnecting: ${shouldReconnect}`);
-      if (shouldReconnect) startBot();
-    } else if (connection === "open") {
-      console.log(`\n✅ ${config.BOT_NAME} CONNECTED SUCCESSFULLY!`);
-
-      const userJid = sock.user.id.split(":")[0] + "@s.whatsapp.net";
-      const connectedAlert = `👑 *${config.BOT_NAME} CONNECTED* 👑\n\n` +
-        `• *Device Identifier:* ${config.DEVICE_NAME} (Chrome)\n` +
-        `• *Auto Status Seen:* 🟢 Active\n` +
-        `• *Auto Status React:* 🟢 Active\n` +
-        `• *Database:* Synced`;
-
-      await sock.sendMessage(userJid, { text: connectedAlert });
-    }
-  });
-}
-
-startBot();
+process.on('unhandledRejection', (e) => console.error('Unhandled:', e));
+process.on('uncaughtException', (e) => console.error('Uncaught:', e));
