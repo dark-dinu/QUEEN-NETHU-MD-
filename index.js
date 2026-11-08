@@ -17,14 +17,18 @@ app.use(express.urlencoded({ extended: true }));
 
 let globalSock = null;
 
-// Command Handler Setup
+// Dynamic Commands loader
 const commands = new Map();
 const commandsPath = path.join(__dirname, "commands");
+
 if (fs.existsSync(commandsPath)) {
-  fs.readdirSync(commandsPath).filter(f => f.endsWith(".js")).forEach(file => {
+  const files = fs.readdirSync(commandsPath).filter((file) => file.endsWith(".js"));
+  for (const file of files) {
     const cmd = require(path.join(commandsPath, file));
-    if (cmd.name && cmd.execute) commands.set(cmd.name.toLowerCase(), cmd);
-  });
+    if (cmd.name && cmd.execute) {
+      commands.set(cmd.name.toLowerCase(), cmd);
+    }
+  }
 }
 
 // 🌐 Glassmorphism Web Interface
@@ -175,7 +179,7 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ⚡ Web Pairing Endpoint
+// ⚡ Realtime Pairing Endpoint
 app.get("/code", async (req, res) => {
   let num = req.query.number;
   if (!num) return res.status(400).json({ error: "Phone number required" });
@@ -193,7 +197,7 @@ app.get("/code", async (req, res) => {
   } else if (globalSock && globalSock.authState.creds.registered) {
     return res.json({ error: "Bot is already registered and running!" });
   } else {
-    return res.status(500).json({ error: "Socket not ready yet." });
+    return res.status(500).json({ error: "Socket not ready yet. Please refresh." });
   }
 });
 
@@ -232,7 +236,7 @@ async function startBot() {
       console.log(`🚀 ${config.BOT_NAME} Connected Successfully!`);
       const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
       await globalSock.sendMessage(ownerJid, {
-        text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Web Pairing & Mongo Cache Active!\nType *${config.PREFIX}ping* to test.`
+        text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Web Pairing & Mongo Cache Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
       }).catch(() => {});
     }
   });
@@ -261,7 +265,6 @@ async function startBot() {
   });
 }
 
-// Initialize Everything
 async function main() {
   await mongoose.connect(config.MONGO_URI, { maxPoolSize: 20 });
   console.log("⚡ MongoDB Connected!");
