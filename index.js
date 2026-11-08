@@ -1,80 +1,177 @@
-const express = require('express');
-const path = require('path');
-const { MongoClient } = require('mongodb');
-const cfg = require('./config');
-const manager = require('./botManager');
+const {
+  default: makeWASocket,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  proto
+} = require("@whiskeysockets/baileys");
+const pino = require("pino");
+const qrcode = require("qrcode-terminal");
+const mongoose = require("mongoose");
+const fs = require("fs");
+const path = require("path");
+const config = require("./config");
 
-const app = express();
-app.set('trust proxy', true);
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// MongoDB Session Setup
+const AuthSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true, unique: true, index: true },
+    data: { type: String, required: true }
+  },
+  { timestamps: false }
+);
+const AuthModel = mongoose.model("SessionAuth", AuthSchema);
 
-// ---- සරල rate limit: IP එකකට විනාඩි 10කට 5 වතාවක් ----
-const hits = new Map();
-function rateLimit(req, res, next) {
-  const now = Date.now();
-  const arr = (hits.get(req.ip) || []).filter((t) => now - t < 10 * 60 * 1000);
-  if (arr.length >= 5) return res.status(429).json({ error: 'Too many requests. විනාඩි කිහිපයකින් උත්සාහ කරන්න.' });
-  arr.push(now);
-  hits.set(req.ip, arr);
-  next();
+// In-Memory RAM Cache to eliminate DB read delays
+const memCache = new Map();
+
+async function useFastMongoAuthState() {
+  const writeData = async (id, data) => {
+    memCache.set(id, data);
+    const serialized = JSON.stringify(data, (key, value) => {
+      if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+        return { type: "Buffer", data: Array.from(value) };
+      }
+      return value;
+    });
+    // Write asynchronously in background without blocking response loop
+    AuthModel.updateOne({ id }, { data: serialized }, { upsert: true }).catch(() => {});
+  };
+
+  const readData = async (id) => {
+    if (memCache.has(id)) return memCache.get(id);
+    try {
+      const doc = await AuthModel.findOne({ id }).lean().exec();
+      if (!doc) return null;
+      const parsed = JSON.parse(doc.data, (key, value) => {
+        if (value && value.type === "Buffer" && Array.isArray(value.data)) {
+          return Buffer.from(value.data);
+        }
+        return value;
+      });
+      memCache.set(id, parsed);
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const removeData = async (id) => {
+    memCache.delete(id);
+    AuthModel.deleteOne({ id }).catch(() => {});
+  };
+
+  const creds = (await readData("creds")) || (await import("@whiskeysockets/baileys")).initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          await Promise.all(
+            ids.map(async (id) => {
+              let value = await readData(`${type}-${id}`);
+              if (type === "app-state-sync-key" && value) {
+                value = proto.Message.AppStateSyncKeyData.fromObject(value);
+              }
+              data[id] = value;
+            })
+          );
+          return data;
+        },
+        set: async (data) => {
+          const tasks = [];
+          for (const category in data) {
+            for (const id in data[category]) {
+              const value = data[category][id];
+              const key = `${category}-${id}`;
+              tasks.push(value ? writeData(key, value) : removeData(key));
+            }
+          }
+          await Promise.all(tasks);
+        }
+      }
+    },
+    saveCreds: () => writeData("creds", creds)
+  };
 }
-setInterval(() => hits.clear(), 60 * 60 * 1000).unref();
 
-app.post('/api/pair', rateLimit, async (req, res) => {
-  const number = String(req.body?.number || '').replace(/\D/g, '');
-  if (number.length < 8 || number.length > 15) {
-    return res.status(400).json({ error: 'Country code එක්ක number එක දාන්න (උදා: 94771234567)' });
+// Fast Command Loader
+const commands = new Map();
+const commandsPath = path.join(__dirname, "commands");
+
+if (fs.existsSync(commandsPath)) {
+  const files = fs.readdirSync(commandsPath).filter(f => f.endsWith(".js"));
+  for (const file of files) {
+    const cmd = require(path.join(commandsPath, file));
+    if (cmd.name && cmd.execute) commands.set(cmd.name.toLowerCase(), cmd);
   }
-  try {
-    const code = await manager.pair(number);
-    res.json({ code });
-  } catch (e) {
-    console.error('pair error:', e.message);
-    res.status(400).json({ error: e.message || 'Pair failed' });
-  }
-});
+}
 
-app.get('/api/status/:number', (req, res) => {
-  res.json({ status: manager.getStatus(req.params.number.replace(/\D/g, '')) });
-});
+async function startQueenNethuBot() {
+  await mongoose.connect(config.MONGO_URI, {
+    maxPoolSize: 20, // High throughput connection pool
+    serverSelectionTimeoutMS: 5000
+  });
+  console.log("⚡ MongoDB Connected (High-Speed Pool Ready)");
 
-app.get('/api/stats', (req, res) => {
-  res.json({ active: manager.activeCount(), loaded: manager.total(), max: cfg.MAX_BOTS });
-});
+  const { state, saveCreds } = await useFastMongoAuthState();
+  const { version } = await fetchLatestBaileysVersion();
 
-app.get('/health', (req, res) => res.send('ok'));
+  const sock = makeWASocket({
+    version,
+    logger: pino({ level: "fatal" }), // Suppress I/O logging overhead
+    auth: state,
+    browser: ["QUEEN-NETHU-MD", "Chrome", "130.0.6723.117"], // Modern desktop Chrome identity
+    syncFullHistory: false, // Prevents loading heavy old chats (drastically cuts startup time)
+    markOnlineOnConnect: true,
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 25000,
+    generateHighQualityLinkPreview: false
+  });
 
-(async () => {
-  const client = new MongoClient(cfg.MONGO_URI, { maxPoolSize: 50 });
-  await client.connect();
-  console.log('✅ MongoDB connected');
+  sock.ev.on("creds.update", saveCreds);
 
-  const db = client.db(cfg.DB_NAME);
-  const cols = {
-    auth: db.collection('auth'),
-    settings: db.collection('settings'),
-    bots: db.collection('bots'),
-  };
-  await cols.auth.createIndex({ session: 1 });
-  await cols.bots.createIndex({ owner: 1, registered: 1 });
+  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      console.log("\nScan this QR Code:\n");
+      qrcode.generate(qr, { small: true });
+    }
 
-  manager.init(cols);
+    if (connection === "close") {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) startQueenNethuBot();
+    } else if (connection === "open") {
+      console.log(`🚀 ${config.BOT_NAME} Connected and Running Ultra-Fast!`);
+    }
+  });
 
-  app.listen(cfg.PORT, () => console.log(`🌐 Pair site: http://localhost:${cfg.PORT}`));
-  manager.loadAll().catch((e) => console.error('loadAll error:', e));
+  // Zero-Latency Message Dispatcher
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify") return;
+    const msg = messages[0];
+    if (!msg?.message || msg.key.fromMe) return;
 
-  const stop = async () => {
-    await manager.shutdown();
-    await client.close();
-    process.exit(0);
-  };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
-})().catch((e) => {
-  console.error('Fatal:', e);
-  process.exit(1);
-});
+    const from = msg.key.remoteJid;
+    const body =
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      msg.message.imageMessage?.caption ||
+      "";
 
-process.on('unhandledRejection', (e) => console.error('Unhandled:', e));
-process.on('uncaughtException', (e) => console.error('Uncaught:', e));
+    if (!body.startsWith(config.PREFIX)) return;
+
+    const args = body.slice(config.PREFIX.length).trim().split(/ +/);
+    const cmdName = args.shift().toLowerCase();
+
+    const cmd = commands.get(cmdName);
+    if (cmd) {
+      cmd.execute(sock, msg, from, args).catch(err => {
+        console.error(`Error on command ${cmdName}:`, err);
+      });
+    }
+  });
+}
+
+startQueenNethuBot().catch(console.error);
