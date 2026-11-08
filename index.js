@@ -6,7 +6,8 @@ const path = require("path");
 const {
   default: makeWASocket,
   DisconnectReason,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  Browsers
 } = require("@whiskeysockets/baileys");
 const config = require("./config");
 const { useMongoAuthState } = require("./auth");
@@ -15,7 +16,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-let globalSock = null;
+let botSock = null;
 
 // Dynamic Commands loader
 const commands = new Map();
@@ -39,7 +40,7 @@ app.get("/", (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QUEEN NETHU MD | Web Hub</title>
+  <title>QUEEN NETHU MD | Pairing Hub</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
@@ -126,7 +127,7 @@ app.get("/", (req, res) => {
     <div class="code-box" id="codeBox">
       <div style="font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Click code to copy:</div>
       <span id="pairCode" onclick="copyCode()">--------</span>
-      <div class="status" id="statusText">Enter this code into WhatsApp now!</div>
+      <div class="status" id="statusText">Enter this code into WhatsApp Linked Devices now!</div>
     </div>
   </div>
 
@@ -139,7 +140,7 @@ app.get("/", (req, res) => {
       const pairCode = document.getElementById('pairCode');
 
       if (!num || num.length < 10) {
-        alert("කරුණාකර Country Code එක සහිත නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න.");
+        alert("කරුණාකර Country Code එක සහිත නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න (උදා: 94719845166).");
         return;
       }
 
@@ -157,12 +158,12 @@ app.get("/", (req, res) => {
           btn.innerText = "Get New Code";
           btn.disabled = false;
         } else {
-          alert(data.error || "Failed to generate pairing code.");
+          alert(data.error || "Failed to generate code.");
           btn.innerText = "Try Again";
           btn.disabled = false;
         }
       } catch (err) {
-        alert("Server error.");
+        alert("Server error. Please try again.");
         btn.innerText = "Try Again";
         btn.disabled = false;
       }
@@ -179,69 +180,101 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ⚡ Realtime Pairing Endpoint
+// ⚡ Direct Fast Pairing Endpoint
 app.get("/code", async (req, res) => {
   let num = req.query.number;
   if (!num) return res.status(400).json({ error: "Phone number required" });
   num = num.replace(/[^0-9]/g, "");
 
-  if (globalSock && !globalSock.authState.creds.registered) {
-    try {
-      let code = await globalSock.requestPairingCode(num);
-      code = code?.match(/.{1,4}/g)?.join("-") || code;
-      return res.json({ code });
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ error: "Failed to generate code." });
+  try {
+    const { state, saveCreds } = await useMongoAuthState();
+    const { version } = await fetchLatestBaileysVersion();
+
+    const pairSock = makeWASocket({
+      version,
+      logger: pino({ level: "fatal" }),
+      auth: state,
+      browser: Browsers.macOS("Chrome"), // Direct Chrome Desktop Identifier
+      syncFullHistory: false
+    });
+
+    pairSock.ev.on("creds.update", saveCreds);
+
+    pairSock.ev.on("connection.update", async (update) => {
+      const { connection } = update;
+      if (connection === "open") {
+        console.log("🎉 Linked Successfully via Web Pairing!");
+        // Re-trigger main bot socket once linked
+        setTimeout(() => startBot(), 2000);
+      }
+    });
+
+    if (!pairSock.authState.creds.registered) {
+      setTimeout(async () => {
+        try {
+          let code = await pairSock.requestPairingCode(num);
+          code = code?.match(/.{1,4}/g)?.join("-") || code;
+          return res.json({ code });
+        } catch (err) {
+          console.error("Pairing request failed:", err);
+          return res.status(500).json({ error: "WhatsApp rejected the request. Please check phone number format." });
+        }
+      }, 2000);
+    } else {
+      return res.json({ error: "Bot is already registered and saved in Database!" });
     }
-  } else if (globalSock && globalSock.authState.creds.registered) {
-    return res.json({ error: "Bot is already registered and running!" });
-  } else {
-    return res.status(500).json({ error: "Socket not ready yet. Please refresh." });
+  } catch (err) {
+    console.error("Endpoint Error:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// 🚀 Start Bot & Socket
+// 🚀 Main Bot Loop (Active after linked)
 async function startBot() {
   const { state, saveCreds } = await useMongoAuthState();
+  if (!state.creds.registered) {
+    console.log("⚠️ Waiting for WhatsApp Pairing via Web...");
+    return;
+  }
+
   const { version } = await fetchLatestBaileysVersion();
 
-  globalSock = makeWASocket({
+  botSock = makeWASocket({
     version,
     logger: pino({ level: "fatal" }),
     auth: state,
-    browser: ["Chrome (Linux)", "Chrome", "130.0.6723.117"],
+    browser: Browsers.macOS("Chrome"),
     syncFullHistory: false,
     markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
     keepAliveIntervalMs: 25000
   });
 
-  globalSock.ev.on("creds.update", saveCreds);
+  botSock.ev.on("creds.update", saveCreds);
 
-  globalSock.ev.on("connection.update", async (update) => {
+  botSock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect } = update;
 
     if (connection === "close") {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`Connection closed (Code: ${statusCode}). Reconnecting: ${shouldReconnect}`);
+      console.log(`Bot connection closed (${statusCode}). Reconnecting: ${shouldReconnect}`);
 
       if (shouldReconnect) {
         startBot();
       } else {
-        console.log("Session logged out. Clear DB to re-link.");
+        console.log("Session terminated. Clear MongoDB to re-link.");
       }
     } else if (connection === "open") {
-      console.log(`🚀 ${config.BOT_NAME} Connected Successfully!`);
+      console.log(`🚀 ${config.BOT_NAME} Connected and Online!`);
       const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
-      await globalSock.sendMessage(ownerJid, {
+      await botSock.sendMessage(ownerJid, {
         text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Web Pairing & Mongo Cache Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
       }).catch(() => {});
     }
   });
 
-  globalSock.ev.on("messages.upsert", async ({ messages, type }) => {
+  botSock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
     const msg = messages[0];
     if (!msg?.message || msg.key.fromMe) return;
@@ -260,11 +293,12 @@ async function startBot() {
 
     const cmd = commands.get(cmdName);
     if (cmd) {
-      cmd.execute(globalSock, msg, from, args).catch(console.error);
+      cmd.execute(botSock, msg, from, args).catch(console.error);
     }
   });
 }
 
+// Start Server
 async function main() {
   await mongoose.connect(config.MONGO_URI, { maxPoolSize: 20 });
   console.log("⚡ MongoDB Connected!");
