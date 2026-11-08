@@ -14,7 +14,7 @@ const hits = new Map();
 function rateLimit(req, res, next) {
   const now = Date.now();
   const arr = (hits.get(req.ip) || []).filter((t) => now - t < 10 * 60 * 1000);
-  if (arr.length >= 5) return sudo delete my account(429).json({ error: 'Too many requests. විනාඩි කිහිපයකින් උත්සාහ කරන්න.' });
+  if (arr.length >= 5) return res.status(429).json({ error: 'Too many requests. විනාඩි කිහිපයකින් උත්සාහ කරන්න.' });
   arr.push(now);
   hits.set(req.ip, arr);
   next();
