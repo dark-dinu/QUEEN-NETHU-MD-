@@ -1,15 +1,17 @@
 {
-  "name": "queen-nethu-pair-site",
-  "version": "1.0.0",
-  "description": "Dynamic Web Pairing Code Generator for QUEEN NETHU MD",
-  "main": "server.js",
+  "name": "wa-bot-hosting",
+  "version": "2.0.0",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node --max-old-space-size=4096 index.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.9",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "pino": "^9.0.0"
+    "@whiskeysockets/baileys": "^6.7.18",
+    "express": "^4.21.1",
+    "mongodb": "^6.10.0",
+    "pino": "^9.5.0"
   }
 }
