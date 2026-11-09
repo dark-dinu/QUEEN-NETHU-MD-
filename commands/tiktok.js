@@ -1,15 +1,30 @@
 const axios = require("axios");
 
 const API_KEY = "chama_api_9c55e3c6d014abbdf65054f9046a920b";
-const TARGET_CHANNEL_JID = "120363383020614051@newsletter"; // https://whatsapp.com/channel/0029VbBTkLI9Gv7bXpWEmg3D
+// ඔබගේ WhatsApp Channel එකේ JID එක (Newsletter ID)
+const TARGET_CHANNEL_JID = "120363383020614051@newsletter";
 
 function cleanTitle(text) {
   if (!text) return "TikTok Video";
   return text
-    .replace(/#\S+/g, "")
-    .replace(/@\S+/g, "")
+    .replace(/#\S+/g, "") // සියලුම #hashtags ඉවත් කිරීම
+    .replace(/@\S+/g, "") // සියලුම @mentions ඉවත් කිරීම
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// Media URL එක Buffer එකක් ලෙස download කරගැනීම (Timeout සහ Stream drops නැති කිරීමට)
+async function getBuffer(url) {
+  const res = await axios({
+    method: "get",
+    url,
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    },
+    responseType: "arraybuffer",
+    timeout: 60000
+  });
+  return Buffer.from(res.data);
 }
 
 module.exports = {
@@ -35,16 +50,15 @@ module.exports = {
 
     try {
       const apiUrl = `https://api.chamindu.site/api/v1/tiktok?url=${encodeURIComponent(inputUrl)}&api_key=${API_KEY}`;
-      const response = await axios.get(apiUrl, { timeout: 30000 });
+      const response = await axios.get(apiUrl, { timeout: 35000 });
       const resData = response.data;
+
+      // Deep data extraction
       const data = resData?.result || resData?.data || resData;
+      if (!data) throw new Error("API එකෙන් දත්ත ලැබුණේ නැත.");
 
-      if (!data) {
-        throw new Error("API එකෙන් දත්ත ලබා ගැනීමට නොහැකි විය.");
-      }
-
-      const hdVideo = data.hdplay || data.play || data.nowm;
-      const sdVideo = data.play || data.nowm || hdVideo;
+      const hdVideo = data.hdplay || data.play_hd || data.play || data.nowm;
+      const sdVideo = data.play || data.nowm || data.wmplay || hdVideo;
       const audioUrl = data.music || data.audio || data.music_info?.play;
       const rawTitle = data.title || data.desc || "TikTok Video";
       const cleanedTitle = cleanTitle(rawTitle);
@@ -54,11 +68,17 @@ module.exports = {
       // 🚀 1. .ctt Command (Direct Channel Send)
       // -------------------------------------------------------------
       if (isChannel) {
-        const downloadUrl = hdVideo || sdVideo;
-        if (!downloadUrl) throw new Error("Video link එක හමු නොවීය.");
+        const targetVideoUrl = hdVideo || sdVideo;
+        if (!targetVideoUrl) throw new Error("Video download link හමු නොවීය.");
 
+        await sock.sendMessage(from, { text: "📤 *Video එක Channel එකට යවමින් පවතී...*" }, { quoted: msg });
+
+        // Buffer download
+        const videoBuffer = await getBuffer(targetVideoUrl);
+
+        // WhatsApp Channel (Newsletter) එකට video එක සහ clean title එක caption එක ලෙස යැවීම
         await sock.sendMessage(TARGET_CHANNEL_JID, {
-          video: { url: downloadUrl },
+          video: videoBuffer,
           caption: cleanedTitle,
           mimetype: "video/mp4"
         });
@@ -72,7 +92,7 @@ module.exports = {
       }
 
       // -------------------------------------------------------------
-      // 🚀 2. .tt Command (Interactive Menu & 1, 2, 3 Register)
+      // 🚀 2. .tt Command (Interactive Menu & Selection)
       // -------------------------------------------------------------
       const menuText = `🎵 *QUEEN NETHU MD TIKTOK DOWNLOADER* 🎵
 
@@ -85,7 +105,7 @@ module.exports = {
   *2* ➜ SD Video 📱
   *3* ➜ Voice Note (Audio) 🎧
 
-_කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
+_කරුණාකර 1, 2, හෝ 3 ලෙස මෙම පණිවිඩයට Reply කරන්න._`;
 
       const menuMsg = await sock.sendMessage(
         from,
@@ -93,15 +113,16 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
         { quoted: msg }
       );
 
-      const sender = msg.key.participant || from;
-
-      registerReply(from, sender, menuMsg.key.id, {
+      // Central Reply Handler එකට action එක register කිරීම
+      registerReply(from, msg, menuMsg.key.id, {
         "1": async (s, m, f) => {
-          const url = hdVideo || sdVideo;
+          const vUrl = hdVideo || sdVideo;
+          if (!vUrl) throw new Error("HD Video හමු නොවීය.");
+          const buf = await getBuffer(vUrl);
           await s.sendMessage(
             f,
             {
-              video: { url },
+              video: buf,
               caption: `🎬 *${cleanedTitle}* (HD Quality)\n👑 QUEEN NETHU MD`,
               mimetype: "video/mp4"
             },
@@ -110,11 +131,13 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
           await s.sendMessage(f, { react: { text: "✅", key: m.key } }).catch(() => {});
         },
         "2": async (s, m, f) => {
-          const url = sdVideo || hdVideo;
+          const vUrl = sdVideo || hdVideo;
+          if (!vUrl) throw new Error("SD Video හමු නොවීය.");
+          const buf = await getBuffer(vUrl);
           await s.sendMessage(
             f,
             {
-              video: { url },
+              video: buf,
               caption: `📱 *${cleanedTitle}* (SD Quality)\n👑 QUEEN NETHU MD`,
               mimetype: "video/mp4"
             },
@@ -123,11 +146,12 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
           await s.sendMessage(f, { react: { text: "✅", key: m.key } }).catch(() => {});
         },
         "3": async (s, m, f) => {
-          if (!audioUrl) throw new Error("Audio URL හමු නොවීය.");
+          if (!audioUrl) throw new Error("Audio හමු නොවීය.");
+          const aBuf = await getBuffer(audioUrl);
           await s.sendMessage(
             f,
             {
-              audio: { url: audioUrl },
+              audio: aBuf,
               mimetype: "audio/mp4",
               ptt: true
             },
@@ -138,7 +162,7 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
       });
 
     } catch (err) {
-      console.error("TikTok Error:", err.message);
+      console.error("TikTok Handler Error:", err.message);
       await sock.sendMessage(from, { react: { text: "❌", key: msg.key } }).catch(() => {});
       await sock.sendMessage(
         from,
