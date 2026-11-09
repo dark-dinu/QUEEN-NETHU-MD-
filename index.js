@@ -5,7 +5,8 @@ const {
   default: makeWASocket,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  Browsers
+  Browsers,
+  proto
 } = require("@whiskeysockets/baileys");
 const config = require("./config");
 const { useMongoAuthState, clearAuth } = require("./auth");
@@ -229,15 +230,20 @@ async function startBotEngine() {
 
     sock = makeWASocket({
       version,
-      logger: pino({ level: "fatal" }),
+      logger: pino({ level: "silent" }),
       auth: state,
       browser: Browsers.macOS("Chrome"),
       printQRInTerminal: false,
       syncFullHistory: false,
       markOnlineOnConnect: true,
+      generateHighQualityLinkPreview: false,
       connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000,
-      defaultQueryTimeoutMs: 0
+      keepAliveIntervalMs: 30000,
+      defaultQueryTimeoutMs: 0,
+      // 🛠️ Message Decryption / Pre-Key Sync (Waiting Message Fix)
+      getMessage: async (key) => {
+        return proto.Message.fromObject({});
+      }
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -252,7 +258,7 @@ async function startBotEngine() {
 
         const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
         await sock.sendMessage(ownerJid, {
-          text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Ultra-Fast Handler Engine Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
+          text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Pre-key Decryption Engine Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
         }).catch(() => {});
       }
 
