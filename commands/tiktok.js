@@ -12,14 +12,14 @@ try {
   ffmpegPath = "ffmpeg";
 }
 
-// Global In-Memory Fast Lookup Maps (O(1))
+// Global In-Memory Fast Lookup Maps
 global.ttCache = global.ttCache || new Map();
 global.ttHookedSockets = global.ttHookedSockets || new WeakSet();
 
-// ඔබගේ Target WhatsApp Channel එක
+// ඔබගේ WhatsApp Channel (Newsletter) JID එක
 const TARGET_CHANNEL_JID = "120363383020614051@newsletter";
 
-// Hashtags (#) සහ Mentions (@) ඉවත් කර පිරිසිදු Title එකක් ලබා ගැනීම
+// Title එකෙන් #hashtags සහ @mentions සම්පූර්ණයෙන්ම ඉවත් කිරීම
 function cleanTitle(text) {
   if (!text) return "TikTok Video";
   return text
@@ -29,7 +29,17 @@ function cleanTitle(text) {
     .trim();
 }
 
-// Safe Temp Remover
+// Views සංඛ්‍යාව ලස්සනට Format කිරීම (e.g. 1.2M, 45.5K)
+function formatNumber(num) {
+  if (!num) return "N/A";
+  const n = Number(num);
+  if (isNaN(n)) return num;
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return n.toString();
+}
+
+// Safe Temp File Remover
 function safeUnlink(filePath) {
   try {
     if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
@@ -61,7 +71,7 @@ function convertToOpusVoice(inputBuffer) {
   });
 }
 
-// Low-latency Stream Downloader
+// Low-latency Stream Buffer Downloader
 async function fetchStreamBuffer(streamUrl) {
   try {
     const res = await axios.get(streamUrl, {
@@ -78,7 +88,7 @@ async function fetchStreamBuffer(streamUrl) {
   }
 }
 
-// Multi-Engine TikTok Scraper Pipeline (Chamindu -> TikWM -> BK9)
+// Multi-Engine TikTok Metadata Fetcher
 async function fetchTikTokMetadata(targetUrl) {
   // Engine 1: Chamindu API
   try {
@@ -93,6 +103,7 @@ async function fetchTikTokMetadata(targetUrl) {
       return {
         title: cleanTitle(d.title || d.desc),
         author: d.author?.nickname || d.author?.unique_id || "TikTok User",
+        views: formatNumber(d.statistics?.play_count || d.play_count || d.views),
         cover: d.origin_cover || d.cover || d.cover_url,
         hd: dl.no_watermark_hd || d.hdplay || d.play_hd || dl.no_watermark || d.play,
         sd: dl.no_watermark_sd || d.play || dl.no_watermark || d.wmplay,
@@ -111,6 +122,7 @@ async function fetchTikTokMetadata(targetUrl) {
       return {
         title: cleanTitle(d2.title),
         author: d2.author?.nickname || d2.author?.unique_id || "TikTok User",
+        views: formatNumber(d2.play_count || d2.views),
         cover: d2.cover,
         hd: d2.hdplay || d2.play,
         sd: d2.play,
@@ -129,6 +141,7 @@ async function fetchTikTokMetadata(targetUrl) {
       return {
         title: cleanTitle(d3.desc),
         author: d3.author?.nickname || "TikTok User",
+        views: "N/A",
         cover: d3.cover,
         hd: d3.HD || d3.nowm,
         sd: d3.nowm,
@@ -140,12 +153,11 @@ async function fetchTikTokMetadata(targetUrl) {
   return null;
 }
 
-// Normalized Chat JID Helper
 function cleanJid(jid = "") {
   return jid.split("@")[0].split(":")[0];
 }
 
-// Low-latency Reply Hook Engine (1, 2, 3 Selection Dispatcher)
+// Low-latency Interactive Reply Listener
 function attachTikTokReplyEngine(sock) {
   if (!sock || global.ttHookedSockets.has(sock)) return;
   global.ttHookedSockets.add(sock);
@@ -183,7 +195,6 @@ function attachTikTokReplyEngine(sock) {
 
     if (choice !== "1" && choice !== "2" && choice !== "3") return;
 
-    // Double execution lock
     if (session.isProcessing) return;
     session.isProcessing = true;
     global.ttCache.delete(quotedId);
@@ -205,14 +216,12 @@ function attachTikTokReplyEngine(sock) {
 
       const streamBuffer = await fetchStreamBuffer(downloadUrl);
 
-      const aestheticCaption = 
-`👑 *QUEEN NETHU MD TIKTOK DOWNLOADER*
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎬 *Title:* ${session.title}
-✨ *Quality:* ${choice === "1" ? "1080p Full HD (No Watermark)" : choice === "2" ? "720p SD (Fast & Light)" : "HQ Audio"}
-⚡ *Latency:* Ultra-Fast Multi-Cluster Relay
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-_Powered by Dinidu Heshan_`;
+      const aestheticDeliveryCaption = 
+`> *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
+˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭
+*✦ 📝 ᴛɪᴛᴇʟ ➥* ${session.title}
+*✦ 🎬 ǫᴜᴀʟɪᴛʏ ➥* ${choice === "1" ? "HD No Watermark" : choice === "2" ? "SD Standard" : "Audio Track"}
+❅─────────────────────❅`;
 
       if (isAudio) {
         if (streamBuffer) {
@@ -243,7 +252,7 @@ _Powered by Dinidu Heshan_`;
             from,
             {
               video: streamBuffer,
-              caption: aestheticCaption,
+              caption: aestheticDeliveryCaption,
               mimetype: "video/mp4"
             },
             { quoted: m }
@@ -253,7 +262,7 @@ _Powered by Dinidu Heshan_`;
             from,
             {
               video: { url: downloadUrl },
-              caption: aestheticCaption,
+              caption: aestheticDeliveryCaption,
               mimetype: "video/mp4"
             },
             { quoted: m }
@@ -277,7 +286,7 @@ _Powered by Dinidu Heshan_`;
 module.exports = {
   name: "tt",
   aliases: ["tiktok", "tikdl", "ttdl"],
-  description: "Download TikTok HD/SD videos and audio via interactive menu",
+  description: "Download TikTok HD/SD videos and audio via aesthetic reply menu",
 
   execute: async (sock, msg, from, args) => {
     attachTikTokReplyEngine(sock);
@@ -295,16 +304,11 @@ module.exports = {
         from,
         {
           text: 
-`╭━━━〔 *QUEEN NETHU TIKTOK GUIDE* 〕━━━╮
-┃
-┃ 📌 *භාවිතය:*
-┃ ➥ \`.tt <tiktok_url>\`
-┃ ➥ \`.ctt <tiktok_url>\` (Direct to Channel)
-┃
-┃ 💡 *උදාහරණය:*
-┃ ➥ \`.tt https://vt.tiktok.com/xxxxxx/\`
-┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`
+`> *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
+˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭
+*✦ 📝 ᴜꜱᴀɢᴇ ➥* .tt <tiktok_link>
+*✦ 📢 ᴄʜᴀɴɴᴇʟ ➥* .ctt <tiktok_link>
+❅─────────────────────❅`
         },
         { quoted: msg }
       );
@@ -335,6 +339,7 @@ module.exports = {
         const videoBuf = await fetchStreamBuffer(downloadUrl);
         const payload = videoBuf ? { video: videoBuf } : { video: { url: downloadUrl } };
 
+        // කිසිදු # tag එකක් නැතිව පිරිසිදු Title එක සමඟ Channel එකට යැවීම
         await sock.sendMessage(TARGET_CHANNEL_JID, {
           ...payload,
           caption: meta.title,
@@ -350,24 +355,21 @@ module.exports = {
       }
 
       // -------------------------------------------------------------
-      // 🚀 2. .tt Command (Interactive Cyber VIP Menu)
+      // 🚀 2. .tt Command (Clean Minimal Aesthetic Menu)
       // -------------------------------------------------------------
       const caption = 
-`╭━━━〔 *QUEEN NETHU TIKTOK HUB* 〕━━━╮
-┃
-┃ 📝 *Title:* ${meta.title.slice(0, 50)}...
-┃ 👤 *Creator:* @${meta.author}
-┃ ⚡ *Engine:* Multi-Cluster Relay
-┃
-┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
-┃  *පහත අංකයකින් Reply කරන්න:*
-┃
-┃  *1* ➜ HD Video (No Watermark) 🎬
-┃  *2* ➜ SD Video (Fast & Light) 📱
-┃  *3* ➜ Voice Note (PTT Audio) 🎙️
-┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-_අවශ්‍ය format එකට අදාළව 1, 2 හෝ 3 මෙම පණිවිඩයට Reply කරන්න._`;
+`> *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
+˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭
+*✦ 📝 ᴛɪᴛᴇʟ ➥* ${meta.title}
+*✦👤 ᴄᴛʀᴀᴛᴏʀ ➥* @${meta.author}
+*✦👀  ᴠɪᴇᴡꜱ ➥* ${meta.views}
+❅─────────────────────❅
+
+1️⃣  ➥ HD Video (No Watermark) 🎬
+2️⃣  ➥ SD Video (Light Quality) 📱
+3️⃣  ➥ Voice Note (PTT Audio) 🎙️
+
+_අවශ්‍ය අංකය (1, 2, 3) මෙම පණිවිඩයට Reply කරන්න._`;
 
       const coverUrl = meta.cover || "https://files.catbox.moe/k315x4.jpg";
       const sentMsg = await sock.sendMessage(
@@ -390,7 +392,7 @@ _අවශ්‍ය format එකට අදාළව 1, 2 හෝ 3 මෙම ප
           isProcessing: false
         });
 
-        // 5-Minute TTL Cache Eviction
+        // 5-Minute Memory Expire
         setTimeout(() => {
           global.ttCache.delete(messageId);
         }, 300000);
