@@ -1,19 +1,17 @@
 const axios = require("axios");
 
 const API_KEY = "chama_api_9c55e3c6d014abbdf65054f9046a920b";
-// ඔබගේ WhatsApp Channel එකේ JID එක (Newsletter ID)
-const TARGET_CHANNEL_JID = "120363383020614051@newsletter";
+const TARGET_CHANNEL_JID = "120363383020614051@newsletter"; // https://whatsapp.com/channel/0029VbBTkLI9Gv7bXpWEmg3D
 
 function cleanTitle(text) {
   if (!text) return "TikTok Video";
   return text
-    .replace(/#\S+/g, "") // සියලුම #hashtags ඉවත් කිරීම
-    .replace(/@\S+/g, "") // සියලුම @mentions ඉවත් කිරීම
+    .replace(/#\S+/g, "")
+    .replace(/@\S+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-// Media URL එක Buffer එකක් ලෙස download කරගැනීම (Timeout සහ Stream drops නැති කිරීමට)
 async function getBuffer(url) {
   const res = await axios({
     method: "get",
@@ -32,8 +30,8 @@ module.exports = {
   description: "Download TikTok videos or send directly to Channel",
   execute: async (sock, msg, from, args, { registerReply }) => {
     const rawText =
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
+      msg.message?.conversation ||
+      msg.message?.extendedTextMessage?.text ||
       "";
     const isChannel = rawText.trim().startsWith(".ctt");
     const inputUrl = args[0];
@@ -52,9 +50,8 @@ module.exports = {
       const apiUrl = `https://api.chamindu.site/api/v1/tiktok?url=${encodeURIComponent(inputUrl)}&api_key=${API_KEY}`;
       const response = await axios.get(apiUrl, { timeout: 35000 });
       const resData = response.data;
-
-      // Deep data extraction
       const data = resData?.result || resData?.data || resData;
+
       if (!data) throw new Error("API එකෙන් දත්ත ලැබුණේ නැත.");
 
       const hdVideo = data.hdplay || data.play_hd || data.play || data.nowm;
@@ -71,12 +68,8 @@ module.exports = {
         const targetVideoUrl = hdVideo || sdVideo;
         if (!targetVideoUrl) throw new Error("Video download link හමු නොවීය.");
 
-        await sock.sendMessage(from, { text: "📤 *Video එක Channel එකට යවමින් පවතී...*" }, { quoted: msg });
-
-        // Buffer download
         const videoBuffer = await getBuffer(targetVideoUrl);
 
-        // WhatsApp Channel (Newsletter) එකට video එක සහ clean title එක caption එක ලෙස යැවීම
         await sock.sendMessage(TARGET_CHANNEL_JID, {
           video: videoBuffer,
           caption: cleanedTitle,
@@ -92,7 +85,7 @@ module.exports = {
       }
 
       // -------------------------------------------------------------
-      // 🚀 2. .tt Command (Interactive Menu & Selection)
+      // 🚀 2. .tt Command (Interactive Menu)
       // -------------------------------------------------------------
       const menuText = `🎵 *QUEEN NETHU MD TIKTOK DOWNLOADER* 🎵
 
@@ -113,11 +106,14 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස මෙම පණිවිඩය�
         { quoted: msg }
       );
 
-      // Central Reply Handler එකට action එක register කිරීම
-      registerReply(from, msg, menuMsg.key.id, {
+      // JID එක String එකක් ලෙස නිවැරදිව ලබා ගැනීම
+      const senderJid = String(msg.key.participant || (msg.key.fromMe ? sock.user?.id : from) || from);
+
+      // Central Reply Handler එකට actions ලියාපදිංචි කිරීම
+      registerReply(from, senderJid, menuMsg.key.id, {
         "1": async (s, m, f) => {
           const vUrl = hdVideo || sdVideo;
-          if (!vUrl) throw new Error("HD Video හමු නොවීය.");
+          if (!vUrl) throw new Error("HD Video link හමු නොවීය.");
           const buf = await getBuffer(vUrl);
           await s.sendMessage(
             f,
@@ -132,7 +128,7 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස මෙම පණිවිඩය�
         },
         "2": async (s, m, f) => {
           const vUrl = sdVideo || hdVideo;
-          if (!vUrl) throw new Error("SD Video හමු නොවීය.");
+          if (!vUrl) throw new Error("SD Video link හමු නොවීය.");
           const buf = await getBuffer(vUrl);
           await s.sendMessage(
             f,
@@ -146,7 +142,7 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස මෙම පණිවිඩය�
           await s.sendMessage(f, { react: { text: "✅", key: m.key } }).catch(() => {});
         },
         "3": async (s, m, f) => {
-          if (!audioUrl) throw new Error("Audio හමු නොවීය.");
+          if (!audioUrl) throw new Error("Audio URL හමු නොවීය.");
           const aBuf = await getBuffer(audioUrl);
           await s.sendMessage(
             f,
