@@ -3,7 +3,6 @@ const axios = require("axios");
 const API_KEY = "chama_api_9c55e3c6d014abbdf65054f9046a920b";
 const TARGET_CHANNEL_JID = "120363383020614051@newsletter"; // https://whatsapp.com/channel/0029VbBTkLI9Gv7bXpWEmg3D
 
-// Hashtags (#) සහ Mentions (@) සම්පූර්ණයෙන් ඉවත් කර Clean Title එකක් ලබා ගැනීම
 function cleanTitle(text) {
   if (!text) return "TikTok Video";
   return text
@@ -32,7 +31,7 @@ module.exports = {
       );
     }
 
-    await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } });
+    await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
 
     try {
       const apiUrl = `https://api.chamindu.site/api/v1/tiktok?url=${encodeURIComponent(inputUrl)}&api_key=${API_KEY}`;
@@ -44,7 +43,6 @@ module.exports = {
         throw new Error("API එකෙන් දත්ත ලබා ගැනීමට නොහැකි විය.");
       }
 
-      // Download URLs සහ Media details extract කිරීම
       const hdVideo = data.hdplay || data.play || data.nowm;
       const sdVideo = data.play || data.nowm || hdVideo;
       const audioUrl = data.music || data.audio || data.music_info?.play;
@@ -65,7 +63,7 @@ module.exports = {
           mimetype: "video/mp4"
         });
 
-        await sock.sendMessage(from, { react: { text: "✅", key: msg.key } });
+        await sock.sendMessage(from, { react: { text: "✅", key: msg.key } }).catch(() => {});
         return await sock.sendMessage(
           from,
           { text: `✅ *සාර්ථකව Channel එකට යවන ලදී!*\n\n📝 *Title:* ${cleanedTitle}` },
@@ -97,7 +95,6 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
 
       const sender = msg.key.participant || from;
 
-      // Central Reply Handler එකට actions ලියාපදිංචි කිරීම
       registerReply(from, sender, menuMsg.key.id, {
         "1": async (s, m, f) => {
           const url = hdVideo || sdVideo;
@@ -110,7 +107,7 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
             },
             { quoted: m }
           );
-          await s.sendMessage(f, { react: { text: "✅", key: m.key } });
+          await s.sendMessage(f, { react: { text: "✅", key: m.key } }).catch(() => {});
         },
         "2": async (s, m, f) => {
           const url = sdVideo || hdVideo;
@@ -123,10 +120,10 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
             },
             { quoted: m }
           );
-          await s.sendMessage(f, { react: { text: "✅", key: m.key } });
+          await s.sendMessage(f, { react: { text: "✅", key: m.key } }).catch(() => {});
         },
         "3": async (s, m, f) => {
-          if (!audioUrl) throw new Error("Audio හමු නොවීය.");
+          if (!audioUrl) throw new Error("Audio URL හමු නොවීය.");
           await s.sendMessage(
             f,
             {
@@ -136,13 +133,13 @@ _කරුණාකර 1, 2, හෝ 3 ලෙස Reply කරන්න._`;
             },
             { quoted: m }
           );
-          await s.sendMessage(f, { react: { text: "✅", key: m.key } });
+          await s.sendMessage(f, { react: { text: "✅", key: m.key } }).catch(() => {});
         }
       });
 
     } catch (err) {
       console.error("TikTok Error:", err.message);
-      await sock.sendMessage(from, { react: { text: "❌", key: msg.key } });
+      await sock.sendMessage(from, { react: { text: "❌", key: msg.key } }).catch(() => {});
       await sock.sendMessage(
         from,
         { text: `❌ *TikTok download කිරීම අසාර්ථක විය:*\n_${err.message}_` },
