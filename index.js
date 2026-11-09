@@ -16,7 +16,9 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-let botSock = null;
+let sock = null;
+let isConnected = false;
+let isConnecting = false;
 
 // Dynamic Commands loader
 const commands = new Map();
@@ -32,7 +34,7 @@ if (fs.existsSync(commandsPath)) {
   }
 }
 
-// 🌐 Glassmorphism Web Interface
+// 🌐 Glassmorphism Web UI
 app.get("/", (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -115,7 +117,7 @@ app.get("/", (req, res) => {
 <body>
   <div class="card">
     <h1>QUEEN NETHU MD</h1>
-    <p>Chrome Multi-Device Pairing Hub</p>
+    <p>Official Multi-Device Pairing</p>
 
     <div class="input-group">
       <label>WhatsApp Number (With Country Code)</label>
@@ -127,7 +129,7 @@ app.get("/", (req, res) => {
     <div class="code-box" id="codeBox">
       <div style="font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Click code to copy:</div>
       <span id="pairCode" onclick="copyCode()">--------</span>
-      <div class="status" id="statusText">Enter this code into WhatsApp Linked Devices now!</div>
+      <div class="status" id="statusText">Enter this code into WhatsApp now!</div>
     </div>
   </div>
 
@@ -140,7 +142,7 @@ app.get("/", (req, res) => {
       const pairCode = document.getElementById('pairCode');
 
       if (!num || num.length < 10) {
-        alert("කරුණාකර Country Code එක සහිත නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න (උදා: 94719845166).");
+        alert("කරුණාකර Country Code එක සහිත නිවැරදි දුරකථන අංකයක් ඇතුළත් කරන්න.");
         return;
       }
 
@@ -157,34 +159,29 @@ app.get("/", (req, res) => {
           codeBox.style.display = "block";
           btn.innerText = "Get New Code";
           btn.disabled = false;
-          pollStatus();
+          checkStatus();
         } else {
           alert(data.error || "Failed to generate code.");
           btn.innerText = "Try Again";
           btn.disabled = false;
         }
       } catch (err) {
-        alert("Server error. Please try again.");
+        alert("Server error. Try again.");
         btn.innerText = "Try Again";
         btn.disabled = false;
       }
     }
 
-    let poller = null;
-    function pollStatus() {
-      clearInterval(poller);
-      let tries = 0;
-      poller = setInterval(async () => {
-        tries++;
+    function checkStatus() {
+      const interval = setInterval(async () => {
         try {
-          const r = await fetch('/status');
-          const d = await r.json();
-          if (d.linked) {
-            clearInterval(poller);
-            document.getElementById('statusText').innerText = "✅ Linked successfully! Bot is online.";
+          const res = await fetch('/status');
+          const data = await res.json();
+          if (data.linked) {
+            clearInterval(interval);
+            document.getElementById('statusText').innerText = "✅ Successfully Linked! Bot is now Online.";
           }
-        } catch (e) {}
-        if (tries > 60) clearInterval(poller);
+        } catch {}
       }, 3000);
     }
 
@@ -199,194 +196,104 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ---------------------------------------------------------------------------
-// 🔗 Linking helpers
-// ---------------------------------------------------------------------------
-let pairSock = null;
-let botConnected = false;
-let botStarting = false;
-let linkState = "idle"; // idle | waiting | linked
-
-function killSock(sock) {
-  if (!sock) return;
-  try { sock.ev.removeAllListeners(); } catch {}
-  try { sock.end(undefined); } catch {}
-}
-
 app.get("/status", (req, res) => {
-  res.json({ linked: botConnected, state: linkState });
+  res.json({ linked: isConnected });
 });
 
-// ⚡ Pairing code endpoint
+// ⚡ Pairing Code Route
 app.get("/code", async (req, res) => {
   const num = String(req.query.number || "").replace(/[^0-9]/g, "");
   if (!num || num.length < 10) {
-    return res.status(400).json({ error: "Country code එක සහිත නිවැරදි අංකයක් දෙන්න (උදා: 94719845166)" });
-  }
-  if (mongoose.connection.readyState !== 1) {
-    return res.status(503).json({ error: "Database not connected. MongoDB URI / Atlas Network Access (0.0.0.0/0) check කරන්න." });
+    return res.status(400).json({ error: "කරුණාකර නිවැරදි අංකය ලබා දෙන්න (උදා: 94719845166)" });
   }
 
-  let responded = false;
-  const respond = (status, body) => {
-    if (responded) return;
-    responded = true;
-    res.status(status).json(body);
-  };
+  if (isConnected) {
+    return res.json({ error: "Bot දැනටමත් සාර්ථකව WhatsApp සමඟ Link වී ඇත." });
+  }
 
   try {
-    let auth = await useMongoAuthState();
-    if (isLinked(auth.state.creds)) {
-      return respond(200, { error: "Bot දැනටමත් link වෙලා! වෙන number එකක් link කරන්න නම් MongoDB එකේ SessionAuth collection එක clear කරලා restart කරන්න." });
+    if (!sock || !sock.ws?.isOpen) {
+      await startBotEngine();
     }
 
-    // link වෙලා නැති session එකක් නිසා හැම attempt එකකටම අලුත් creds පාවිච්චි කරනවා
-    killSock(pairSock);
-    pairSock = null;
-    await clearAuth();
-    auth = await useMongoAuthState();
-    const { state, saveCreds } = auth;
-
-    const { version } = await fetchLatestBaileysVersion();
-    const sock = makeWASocket({
-      version,
-      logger: pino({ level: "fatal" }),
-      auth: state,
-      browser: Browsers.macOS("Chrome"),
-      printQRInTerminal: false,
-      syncFullHistory: false,
-      markOnlineOnConnect: false
-    });
-    pairSock = sock;
-    sock.ev.on("creds.update", saveCreds);
-
-    let requested = false;
-    const requestCode = async () => {
-      if (requested) return;
-      requested = true;
+    // Handshake එකට තත්පර 2ක් ලබා දී code එක request කිරීම
+    setTimeout(async () => {
       try {
         let code = await sock.requestPairingCode(num);
         code = code?.match(/.{1,4}/g)?.join("-") || code;
-        linkState = "waiting";
-        console.log(`🔑 Pairing code generated for ${num}`);
-        respond(200, { code });
+        return res.json({ code });
       } catch (err) {
-        console.error("Pairing request failed:", err?.message || err);
-        respond(500, { error: "WhatsApp rejected the request. Number එක (country code, + නැතුව) check කරලා ආයෙ try කරන්න." });
-        killSock(sock);
-        if (pairSock === sock) pairSock = null;
+        console.error("Pairing Error:", err.message);
+        return res.status(500).json({ error: "WhatsApp එකෙන් pairing code එක ප්‍රතික්ෂේප කළා. දුරකථන අංකය පරීක්ෂා කරන්න." });
       }
-    };
+    }, 2000);
 
-    sock.ev.on("connection.update", (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      // qr event එක ආවම websocket එක ready — pairing code ඉල්ලන්න හොඳම වෙලාව
-      if (qr) requestCode();
-
-      if (connection === "open") {
-        console.log("🎉 Linked successfully!");
-        linkState = "linked";
-        killSock(sock);
-        if (pairSock === sock) pairSock = null;
-        startBot();
-      }
-
-      if (connection === "close") {
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        if (isLinked(state.creds)) {
-          // Pair success වුණාම WhatsApp restart (515) ඉල්ලනවා -> main bot එක start කරනවා
-          console.log(`✅ Pair success (${statusCode}). Starting main bot...`);
-          linkState = "linked";
-          killSock(sock);
-          if (pairSock === sock) pairSock = null;
-          setTimeout(startBot, 1000);
-        } else {
-          console.log(`Pairing socket closed before link (${statusCode}).`);
-          respond(500, { error: `WhatsApp connection closed (${statusCode}). ආයෙ try කරන්න.` });
-          if (pairSock === sock) pairSock = null;
-          linkState = "idle";
-        }
-      }
-    });
-
-    // qr event එක නොආවොත් fallback
-    setTimeout(requestCode, 6000);
-    setTimeout(() => respond(504, { error: "WhatsApp response එකක් ආවෙ නෑ. ආයෙ try කරන්න." }), 30000);
-  } catch (err) {
-    console.error("Endpoint Error:", err);
-    respond(500, { error: "Internal Server Error" });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// ---------------------------------------------------------------------------
-// 🚀 Main Bot Loop (link වුණාට පස්සෙ)
-// ---------------------------------------------------------------------------
-async function startBot() {
-  if (botStarting) return;
-  botStarting = true;
+// 🚀 Core Engine
+async function startBotEngine() {
+  if (isConnecting) return;
+  isConnecting = true;
+
   try {
     const { state, saveCreds } = await useMongoAuthState();
-    if (!isLinked(state.creds)) {
-      console.log("⚠️ Waiting for WhatsApp pairing via web page...");
-      return;
-    }
-
-    killSock(botSock);
-    botSock = null;
-    botConnected = false;
-
     const { version } = await fetchLatestBaileysVersion();
-    const sock = makeWASocket({
+
+    sock = makeWASocket({
       version,
       logger: pino({ level: "fatal" }),
       auth: state,
+      // Official desktop Chrome fingerprint
       browser: Browsers.macOS("Chrome"),
       printQRInTerminal: false,
       syncFullHistory: false,
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000
+      keepAliveIntervalMs: 25000,
+      defaultQueryTimeoutMs: 0
     });
-    botSock = sock;
 
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect } = update;
 
+      if (connection === "open") {
+        isConnected = true;
+        isConnecting = false;
+        console.log(`🚀 ${config.BOT_NAME} Connected and Online!`);
+
+        const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
+        await sock.sendMessage(ownerJid, {
+          text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ WhatsApp Multi-Device Auto-Connected!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
+        }).catch(() => {});
+      }
+
       if (connection === "close") {
-        botConnected = false;
+        isConnected = false;
+        isConnecting = false;
         const statusCode = lastDisconnect?.error?.output?.statusCode;
-        console.log(`Bot connection closed (${statusCode}).`);
+        console.log(`Connection closed with code: ${statusCode}`);
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.log("Session logged out. Database clear කළා — web page එකෙන් ආයෙ link කරන්න.");
-          linkState = "idle";
-          botSock = null;
-          await clearAuth().catch(() => {});
-        } else if (statusCode === DisconnectReason.connectionReplaced) {
-          console.log("Connection replaced by another session. Reconnect නොකරන්නෙ.");
+          console.log("Session logged out. Clearing database...");
+          await clearAuth();
+          startBotEngine();
         } else {
-          setTimeout(startBot, 3000);
+          // Restart Code (515) හෝ Network drops වලදී auto reconnect වීම
+          setTimeout(startBotEngine, 3000);
         }
-      } else if (connection === "open") {
-        botConnected = true;
-        linkState = "linked";
-        console.log(`🚀 ${config.BOT_NAME} Connected and Online!`);
-        const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
-        await sock
-          .sendMessage(ownerJid, {
-            text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Web Pairing & Mongo Cache Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
-          })
-          .catch(() => {});
       }
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify") return;
       const msg = messages[0];
-      if (!msg?.message) return;
+      if (!msg?.message || msg.key.fromMe) return;
 
       const from = msg.key.remoteJid;
       const body =
@@ -395,7 +302,6 @@ async function startBot() {
         msg.message.imageMessage?.caption ||
         "";
 
-      // Bot ගේ own replies prefix එකෙන් පටන් ගන්නෙ නැති නිසා fromMe වුණත් command එකක් නම් අවසර දෙනවා
       if (!body.startsWith(config.PREFIX)) return;
 
       const args = body.slice(config.PREFIX.length).trim().split(/ +/);
@@ -403,20 +309,18 @@ async function startBot() {
 
       const cmd = commands.get(cmdName);
       if (cmd) {
-        Promise.resolve(cmd.execute(sock, msg, from, args)).catch(console.error);
+        cmd.execute(sock, msg, from, args).catch(console.error);
       }
     });
+
   } catch (err) {
-    console.error("startBot error:", err);
-    setTimeout(startBot, 5000);
-  } finally {
-    botStarting = false;
+    console.error("Engine Start Error:", err);
+    isConnecting = false;
+    setTimeout(startBotEngine, 5000);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Start Server (Render port scan එකට කලින් listen කරනවා)
-// ---------------------------------------------------------------------------
+// Start Server
 async function main() {
   app.listen(config.PORT, () => {
     console.log(`🌐 Web UI Live on Port ${config.PORT}`);
@@ -425,13 +329,10 @@ async function main() {
   try {
     await mongoose.connect(config.MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 20000 });
     console.log("⚡ MongoDB Connected!");
+    await startBotEngine();
   } catch (err) {
-    console.error("❌ MongoDB connection failed:", err.message);
-    console.error("   -> MONGO_URI නිවැරදිද බලන්න, Atlas > Network Access එකේ 0.0.0.0/0 allow කරන්න.");
-    return;
+    console.error("❌ MongoDB connection error:", err.message);
   }
-
-  await startBot();
 }
 
 main().catch(console.error);
