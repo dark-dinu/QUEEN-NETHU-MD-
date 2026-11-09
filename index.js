@@ -10,7 +10,7 @@ const {
   Browsers
 } = require("@whiskeysockets/baileys");
 const config = require("./config");
-const { useMongoAuthState } = require("./auth");
+const { useMongoAuthState, isLinked, clearAuth } = require("./auth");
 
 const app = express();
 app.use(express.json());
@@ -157,6 +157,7 @@ app.get("/", (req, res) => {
           codeBox.style.display = "block";
           btn.innerText = "Get New Code";
           btn.disabled = false;
+          pollStatus();
         } else {
           alert(data.error || "Failed to generate code.");
           btn.innerText = "Try Again";
@@ -167,6 +168,24 @@ app.get("/", (req, res) => {
         btn.innerText = "Try Again";
         btn.disabled = false;
       }
+    }
+
+    let poller = null;
+    function pollStatus() {
+      clearInterval(poller);
+      let tries = 0;
+      poller = setInterval(async () => {
+        tries++;
+        try {
+          const r = await fetch('/status');
+          const d = await r.json();
+          if (d.linked) {
+            clearInterval(poller);
+            document.getElementById('statusText').innerText = "✅ Linked successfully! Bot is online.";
+          }
+        } catch (e) {}
+        if (tries > 60) clearInterval(poller);
+      }, 3000);
     }
 
     function copyCode() {
@@ -180,132 +199,237 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ⚡ Direct Fast Pairing Endpoint
+// ---------------------------------------------------------------------------
+// 🔗 Linking helpers
+// ---------------------------------------------------------------------------
+let pairSock = null;
+let botConnected = false;
+let botStarting = false;
+let linkState = "idle"; // idle | waiting | linked
+
+function killSock(sock) {
+  if (!sock) return;
+  try { sock.ev.removeAllListeners(); } catch {}
+  try { sock.end(undefined); } catch {}
+}
+
+app.get("/status", (req, res) => {
+  res.json({ linked: botConnected, state: linkState });
+});
+
+// ⚡ Pairing code endpoint
 app.get("/code", async (req, res) => {
-  let num = req.query.number;
-  if (!num) return res.status(400).json({ error: "Phone number required" });
-  num = num.replace(/[^0-9]/g, "");
+  const num = String(req.query.number || "").replace(/[^0-9]/g, "");
+  if (!num || num.length < 10) {
+    return res.status(400).json({ error: "Country code එක සහිත නිවැරදි අංකයක් දෙන්න (උදා: 94719845166)" });
+  }
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: "Database not connected. MongoDB URI / Atlas Network Access (0.0.0.0/0) check කරන්න." });
+  }
+
+  let responded = false;
+  const respond = (status, body) => {
+    if (responded) return;
+    responded = true;
+    res.status(status).json(body);
+  };
 
   try {
-    const { state, saveCreds } = await useMongoAuthState();
-    const { version } = await fetchLatestBaileysVersion();
+    let auth = await useMongoAuthState();
+    if (isLinked(auth.state.creds)) {
+      return respond(200, { error: "Bot දැනටමත් link වෙලා! වෙන number එකක් link කරන්න නම් MongoDB එකේ SessionAuth collection එක clear කරලා restart කරන්න." });
+    }
 
-    const pairSock = makeWASocket({
+    // link වෙලා නැති session එකක් නිසා හැම attempt එකකටම අලුත් creds පාවිච්චි කරනවා
+    killSock(pairSock);
+    pairSock = null;
+    await clearAuth();
+    auth = await useMongoAuthState();
+    const { state, saveCreds } = auth;
+
+    const { version } = await fetchLatestBaileysVersion();
+    const sock = makeWASocket({
       version,
       logger: pino({ level: "fatal" }),
       auth: state,
-      browser: Browsers.macOS("Chrome"), // Direct Chrome Desktop Identifier
-      syncFullHistory: false
+      browser: Browsers.macOS("Chrome"),
+      printQRInTerminal: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: false
     });
+    pairSock = sock;
+    sock.ev.on("creds.update", saveCreds);
 
-    pairSock.ev.on("creds.update", saveCreds);
+    let requested = false;
+    const requestCode = async () => {
+      if (requested) return;
+      requested = true;
+      try {
+        let code = await sock.requestPairingCode(num);
+        code = code?.match(/.{1,4}/g)?.join("-") || code;
+        linkState = "waiting";
+        console.log(`🔑 Pairing code generated for ${num}`);
+        respond(200, { code });
+      } catch (err) {
+        console.error("Pairing request failed:", err?.message || err);
+        respond(500, { error: "WhatsApp rejected the request. Number එක (country code, + නැතුව) check කරලා ආයෙ try කරන්න." });
+        killSock(sock);
+        if (pairSock === sock) pairSock = null;
+      }
+    };
 
-    pairSock.ev.on("connection.update", async (update) => {
-      const { connection } = update;
+    sock.ev.on("connection.update", (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      // qr event එක ආවම websocket එක ready — pairing code ඉල්ලන්න හොඳම වෙලාව
+      if (qr) requestCode();
+
       if (connection === "open") {
-        console.log("🎉 Linked Successfully via Web Pairing!");
-        // Re-trigger main bot socket once linked
-        setTimeout(() => startBot(), 2000);
+        console.log("🎉 Linked successfully!");
+        linkState = "linked";
+        killSock(sock);
+        if (pairSock === sock) pairSock = null;
+        startBot();
+      }
+
+      if (connection === "close") {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        if (isLinked(state.creds)) {
+          // Pair success වුණාම WhatsApp restart (515) ඉල්ලනවා -> main bot එක start කරනවා
+          console.log(`✅ Pair success (${statusCode}). Starting main bot...`);
+          linkState = "linked";
+          killSock(sock);
+          if (pairSock === sock) pairSock = null;
+          setTimeout(startBot, 1000);
+        } else {
+          console.log(`Pairing socket closed before link (${statusCode}).`);
+          respond(500, { error: `WhatsApp connection closed (${statusCode}). ආයෙ try කරන්න.` });
+          if (pairSock === sock) pairSock = null;
+          linkState = "idle";
+        }
       }
     });
 
-    if (!pairSock.authState.creds.registered) {
-      setTimeout(async () => {
-        try {
-          let code = await pairSock.requestPairingCode(num);
-          code = code?.match(/.{1,4}/g)?.join("-") || code;
-          return res.json({ code });
-        } catch (err) {
-          console.error("Pairing request failed:", err);
-          return res.status(500).json({ error: "WhatsApp rejected the request. Please check phone number format." });
-        }
-      }, 2000);
-    } else {
-      return res.json({ error: "Bot is already registered and saved in Database!" });
-    }
+    // qr event එක නොආවොත් fallback
+    setTimeout(requestCode, 6000);
+    setTimeout(() => respond(504, { error: "WhatsApp response එකක් ආවෙ නෑ. ආයෙ try කරන්න." }), 30000);
   } catch (err) {
     console.error("Endpoint Error:", err);
-    return res.status(500).json({ error: "Internal Server Error" });
+    respond(500, { error: "Internal Server Error" });
   }
 });
 
-// 🚀 Main Bot Loop (Active after linked)
+// ---------------------------------------------------------------------------
+// 🚀 Main Bot Loop (link වුණාට පස්සෙ)
+// ---------------------------------------------------------------------------
 async function startBot() {
-  const { state, saveCreds } = await useMongoAuthState();
-  if (!state.creds.registered) {
-    console.log("⚠️ Waiting for WhatsApp Pairing via Web...");
-    return;
-  }
+  if (botStarting) return;
+  botStarting = true;
+  try {
+    const { state, saveCreds } = await useMongoAuthState();
+    if (!isLinked(state.creds)) {
+      console.log("⚠️ Waiting for WhatsApp pairing via web page...");
+      return;
+    }
 
-  const { version } = await fetchLatestBaileysVersion();
+    killSock(botSock);
+    botSock = null;
+    botConnected = false;
 
-  botSock = makeWASocket({
-    version,
-    logger: pino({ level: "fatal" }),
-    auth: state,
-    browser: Browsers.macOS("Chrome"),
-    syncFullHistory: false,
-    markOnlineOnConnect: true,
-    connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 25000
-  });
+    const { version } = await fetchLatestBaileysVersion();
+    const sock = makeWASocket({
+      version,
+      logger: pino({ level: "fatal" }),
+      auth: state,
+      browser: Browsers.macOS("Chrome"),
+      printQRInTerminal: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: true,
+      connectTimeoutMs: 60000,
+      keepAliveIntervalMs: 25000
+    });
+    botSock = sock;
 
-  botSock.ev.on("creds.update", saveCreds);
+    sock.ev.on("creds.update", saveCreds);
 
-  botSock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect } = update;
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect } = update;
 
-    if (connection === "close") {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`Bot connection closed (${statusCode}). Reconnecting: ${shouldReconnect}`);
+      if (connection === "close") {
+        botConnected = false;
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        console.log(`Bot connection closed (${statusCode}).`);
 
-      if (shouldReconnect) {
-        startBot();
-      } else {
-        console.log("Session terminated. Clear MongoDB to re-link.");
+        if (statusCode === DisconnectReason.loggedOut) {
+          console.log("Session logged out. Database clear කළා — web page එකෙන් ආයෙ link කරන්න.");
+          linkState = "idle";
+          botSock = null;
+          await clearAuth().catch(() => {});
+        } else if (statusCode === DisconnectReason.connectionReplaced) {
+          console.log("Connection replaced by another session. Reconnect නොකරන්නෙ.");
+        } else {
+          setTimeout(startBot, 3000);
+        }
+      } else if (connection === "open") {
+        botConnected = true;
+        linkState = "linked";
+        console.log(`🚀 ${config.BOT_NAME} Connected and Online!`);
+        const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
+        await sock
+          .sendMessage(ownerJid, {
+            text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Web Pairing & Mongo Cache Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
+          })
+          .catch(() => {});
       }
-    } else if (connection === "open") {
-      console.log(`🚀 ${config.BOT_NAME} Connected and Online!`);
-      const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
-      await botSock.sendMessage(ownerJid, {
-        text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Web Pairing & Mongo Cache Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
-      }).catch(() => {});
-    }
-  });
+    });
 
-  botSock.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify") return;
-    const msg = messages[0];
-    if (!msg?.message || msg.key.fromMe) return;
+    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+      if (type !== "notify") return;
+      const msg = messages[0];
+      if (!msg?.message) return;
 
-    const from = msg.key.remoteJid;
-    const body =
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
-      msg.message.imageMessage?.caption ||
-      "";
+      const from = msg.key.remoteJid;
+      const body =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        msg.message.imageMessage?.caption ||
+        "";
 
-    if (!body.startsWith(config.PREFIX)) return;
+      // Bot ගේ own replies prefix එකෙන් පටන් ගන්නෙ නැති නිසා fromMe වුණත් command එකක් නම් අවසර දෙනවා
+      if (!body.startsWith(config.PREFIX)) return;
 
-    const args = body.slice(config.PREFIX.length).trim().split(/ +/);
-    const cmdName = args.shift().toLowerCase();
+      const args = body.slice(config.PREFIX.length).trim().split(/ +/);
+      const cmdName = (args.shift() || "").toLowerCase();
 
-    const cmd = commands.get(cmdName);
-    if (cmd) {
-      cmd.execute(botSock, msg, from, args).catch(console.error);
-    }
-  });
+      const cmd = commands.get(cmdName);
+      if (cmd) {
+        Promise.resolve(cmd.execute(sock, msg, from, args)).catch(console.error);
+      }
+    });
+  } catch (err) {
+    console.error("startBot error:", err);
+    setTimeout(startBot, 5000);
+  } finally {
+    botStarting = false;
+  }
 }
 
-// Start Server
+// ---------------------------------------------------------------------------
+// Start Server (Render port scan එකට කලින් listen කරනවා)
+// ---------------------------------------------------------------------------
 async function main() {
-  await mongoose.connect(config.MONGO_URI, { maxPoolSize: 20 });
-  console.log("⚡ MongoDB Connected!");
-
   app.listen(config.PORT, () => {
     console.log(`🌐 Web UI Live on Port ${config.PORT}`);
   });
+
+  try {
+    await mongoose.connect(config.MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 20000 });
+    console.log("⚡ MongoDB Connected!");
+  } catch (err) {
+    console.error("❌ MongoDB connection failed:", err.message);
+    console.error("   -> MONGO_URI නිවැරදිද බලන්න, Atlas > Network Access එකේ 0.0.0.0/0 allow කරන්න.");
+    return;
+  }
 
   await startBot();
 }
