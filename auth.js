@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { proto } = require("@whiskeysockets/baileys");
+const { proto, initAuthCreds, BufferJSON } = require("@whiskeysockets/baileys");
 
 const AuthSchema = new mongoose.Schema(
   {
@@ -9,19 +9,29 @@ const AuthSchema = new mongoose.Schema(
   { timestamps: false }
 );
 
-const AuthModel = mongoose.model("SessionAuth", AuthSchema);
+const AuthModel = mongoose.models.SessionAuth || mongoose.model("SessionAuth", AuthSchema);
 const memCache = new Map();
+
+// WhatsApp multi-device වල link වුණාම `creds.account` set වෙනවා.
+// (creds.registered කියන එක MD වල හැමවිටම true වෙන්නෙ නෑ, ඒකයි කලින් bot start වෙන්නෙ නැතුව තිබුණෙ)
+function isLinked(creds) {
+  return !!(creds && (creds.registered || creds.account));
+}
+
+async function clearAuth() {
+  memCache.clear();
+  await AuthModel.deleteMany({});
+}
 
 async function useMongoAuthState() {
   const writeData = async (id, data) => {
     memCache.set(id, data);
-    const serialized = JSON.stringify(data, (key, value) => {
-      if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
-        return { type: "Buffer", data: Array.from(value) };
-      }
-      return value;
-    });
-    AuthModel.updateOne({ id }, { data: serialized }, { upsert: true }).catch(() => {});
+    try {
+      const serialized = JSON.stringify(data, BufferJSON.replacer);
+      await AuthModel.updateOne({ id }, { data: serialized }, { upsert: true });
+    } catch (err) {
+      console.error(`Auth write failed (${id}):`, err.message);
+    }
   };
 
   const readData = async (id) => {
@@ -29,12 +39,7 @@ async function useMongoAuthState() {
     try {
       const doc = await AuthModel.findOne({ id }).lean().exec();
       if (!doc) return null;
-      const parsed = JSON.parse(doc.data, (key, value) => {
-        if (value && value.type === "Buffer" && Array.isArray(value.data)) {
-          return Buffer.from(value.data);
-        }
-        return value;
-      });
+      const parsed = JSON.parse(doc.data, BufferJSON.reviver);
       memCache.set(id, parsed);
       return parsed;
     } catch {
@@ -44,10 +49,12 @@ async function useMongoAuthState() {
 
   const removeData = async (id) => {
     memCache.delete(id);
-    AuthModel.deleteOne({ id }).catch(() => {});
+    try {
+      await AuthModel.deleteOne({ id });
+    } catch {}
   };
 
-  const creds = (await readData("creds")) || (await import("@whiskeysockets/baileys")).initAuthCreds();
+  const creds = (await readData("creds")) || initAuthCreds();
 
   return {
     state: {
@@ -83,4 +90,4 @@ async function useMongoAuthState() {
   };
 }
 
-module.exports = { useMongoAuthState };
+module.exports = { useMongoAuthState, isLinked, clearAuth };
