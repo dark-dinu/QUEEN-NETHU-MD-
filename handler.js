@@ -20,14 +20,40 @@ if (fs.existsSync(commandsPath)) {
 }
 
 /**
- * JID එකෙන් Device/LID parts ඉවත් කර Standard JID එකක් ලබා ගැනීම
+ * WhatsApp JID එකෙන් Device IDs / LIDs ඉවත් කර පිරිසිදු Standard JID එකක් ලබා ගැනීම
  */
 function cleanJid(jid = "") {
+  if (!jid) return "";
   return jid.split(":")[0].split("@")[0] + "@s.whatsapp.net";
 }
 
 /**
- * Commands ඇතුළෙන් 1, 2, 3 Interactive Menu එකක් Register කරන Helper Function එක
+ * ViewOnce, Ephemeral, Document ආදී විවිධ Wrappers අස්සේ එන Message එක Unwrap කර Body එක ලබා ගැනීම
+ */
+function extractMessageContent(msg) {
+  let m = msg.message;
+  if (!m) return "";
+
+  // Ephemeral, ViewOnce, DocumentMessage unwrapping
+  if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+  if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+  if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+  if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+
+  return (
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    m.videoMessage?.caption ||
+    m.buttonsResponseMessage?.selectedButtonId ||
+    m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    m.templateButtonReplyMessage?.selectedId ||
+    ""
+  );
+}
+
+/**
+ * Commands ඇතුළෙන් 1, 2, 3 Interactive Menu එකක් Register කරන Function එක
  * @param {string} from - Chat JID
  * @param {string} sender - User JID
  * @param {string} msgId - Menu message key ID
@@ -35,22 +61,27 @@ function cleanJid(jid = "") {
  * @param {number} timeoutMs - Timeout කාලය (Default: තත්පර 120)
  */
 function registerReply(from, sender, msgId, actions, timeoutMs = 120000) {
-  const senderClean = cleanJid(sender);
-  const sessionKey = `${from}_${senderClean}`;
+  // Chat JID එක සහ Sender JID එක පදනම් කරගත් Unique Keys දෙකක් සාදයි (Self-chat compatibility සඳහා)
+  const userClean = cleanJid(sender);
+  const primaryKey = `${from}_${userClean}`;
+  const fallbackKey = `${from}`;
 
-  if (replySessions.has(sessionKey)) {
-    clearTimeout(replySessions.get(sessionKey).timer);
-  }
+  const cleanup = () => {
+    replySessions.delete(primaryKey);
+    replySessions.delete(fallbackKey);
+  };
 
-  const timer = setTimeout(() => {
-    replySessions.delete(sessionKey);
-  }, timeoutMs);
+  const timer = setTimeout(cleanup, timeoutMs);
 
-  replySessions.set(sessionKey, {
+  const sessionData = {
     msgId,
     actions,
-    timer
-  });
+    timer,
+    cleanup
+  };
+
+  replySessions.set(primaryKey, sessionData);
+  replySessions.set(fallbackKey, sessionData);
 }
 
 /**
@@ -61,54 +92,48 @@ async function handleMessage(sock, msg) {
     if (!msg?.message) return;
 
     const from = msg.key.remoteJid;
-    // WhatsApp Status broadcast පණිවිඩ ignore කිරීම
-    if (!from || from === "status@broadcast") return;
+    // Status broadcast සහ Protocol/Decryption empty messages ignore කිරීම
+    if (!from || from === "status@broadcast" || from.endsWith("@broadcast")) return;
 
-    // Sender හඳුනා ගැනීම (Group එකක නම් participant, Private නම් remoteJid)
-    const rawSender = msg.key.participant || from;
+    // Decryption message keys drop වීම වැළැක්වීම (Waiting message triggers ignore කිරීම)
+    if (msg.message.senderKeyDistributionMessage || msg.message.protocolMessage) return;
+
+    // Sender හඳුනා ගැනීම (Self-chat, Groups, Private chats සඳහා)
+    const rawSender = msg.key.participant || (msg.key.fromMe ? sock.user?.id : from);
     const sender = cleanJid(rawSender);
 
-    const body =
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
-      msg.message.imageMessage?.caption ||
-      msg.message.videoMessage?.caption ||
-      "";
-
+    const body = extractMessageContent(msg);
     const trimmedBody = body.trim();
     if (!trimmedBody) return;
-
-    // Quoted reply details ලබා ගැනීම
-    const contextInfo =
-      msg.message.extendedTextMessage?.contextInfo ||
-      msg.message.imageMessage?.contextInfo ||
-      msg.message.videoMessage?.contextInfo;
-    const quotedMsgId = contextInfo?.stanzaId;
 
     // -------------------------------------------------------------
     // 🎯 1. Interactive 1, 2, 3 Reply Handling
     // -------------------------------------------------------------
-    const sessionKey = `${from}_${sender}`;
-    if (replySessions.has(sessionKey)) {
-      const session = replySessions.get(sessionKey);
+    const primaryKey = `${from}_${sender}`;
+    const fallbackKey = `${from}`;
+    const activeSession = replySessions.get(primaryKey) || replySessions.get(fallbackKey);
 
-      // Quoted reply එකේ stanzaId එක match වීම හෝ user නිකම්ම 1, 2, 3 type කිරීම
-      const isMatching = !quotedMsgId || quotedMsgId === session.msgId;
+    if (activeSession && activeSession.actions[trimmedBody]) {
+      clearTimeout(activeSession.timer);
+      activeSession.cleanup();
 
-      if (isMatching && session.actions[trimmedBody]) {
-        clearTimeout(session.timer);
-        replySessions.delete(sessionKey);
+      await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
 
-        await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
-
-        // Command එක ඇතුළේ register කළ function එක execute කිරීම
-        await session.actions[trimmedBody](sock, msg, from);
-        return;
+      try {
+        await activeSession.actions[trimmedBody](sock, msg, from);
+      } catch (actionErr) {
+        console.error("Action Execution Error:", actionErr.message);
+        await sock.sendMessage(
+          from,
+          { text: `❌ ක්‍රියාවලිය අසාර්ථක විය: ${actionErr.message}` },
+          { quoted: msg }
+        );
       }
+      return;
     }
 
     // -------------------------------------------------------------
-    // ⚡ 2. Prefix & Command Execution (.ping, .tt, ආදිය)
+    // ⚡ 2. Prefix & Command Execution (.ping, .tt, .ctt ආදිය)
     // -------------------------------------------------------------
     if (!trimmedBody.startsWith(config.PREFIX)) return;
 
