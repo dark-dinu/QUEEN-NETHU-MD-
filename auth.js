@@ -10,39 +10,39 @@ const AuthSchema = new mongoose.Schema(
 );
 
 const AuthModel = mongoose.models.SessionAuth || mongoose.model("SessionAuth", AuthSchema);
-const memCache = new Map();
+const memoryCache = new Map();
 
 function isLinked(creds) {
   return !!(creds && (creds.registered || creds.account || creds.me));
 }
 
 async function clearAuth() {
-  memCache.clear();
+  memoryCache.clear();
   try {
     await AuthModel.deleteMany({});
-  } catch (e) {
-    console.error("Clear auth failed:", e.message);
+  } catch (err) {
+    console.error("Auth clear failed:", err.message);
   }
 }
 
 async function useMongoAuthState() {
   const writeData = async (id, data) => {
-    memCache.set(id, data);
+    memoryCache.set(id, data);
     try {
       const serialized = JSON.stringify(data, BufferJSON.replacer);
       await AuthModel.updateOne({ id }, { data: serialized }, { upsert: true });
     } catch (err) {
-      console.error(`Auth write error (${id}):`, err.message);
+      console.error(`Write failed (${id}):`, err.message);
     }
   };
 
   const readData = async (id) => {
-    if (memCache.has(id)) return memCache.get(id);
+    if (memoryCache.has(id)) return memoryCache.get(id);
     try {
       const doc = await AuthModel.findOne({ id }).lean().exec();
       if (!doc) return null;
       const parsed = JSON.parse(doc.data, BufferJSON.reviver);
-      memCache.set(id, parsed);
+      memoryCache.set(id, parsed);
       return parsed;
     } catch {
       return null;
@@ -50,7 +50,7 @@ async function useMongoAuthState() {
   };
 
   const removeData = async (id) => {
-    memCache.delete(id);
+    memoryCache.delete(id);
     try {
       await AuthModel.deleteOne({ id });
     } catch {}
