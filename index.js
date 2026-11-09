@@ -1,8 +1,6 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const pino = require("pino");
-const fs = require("fs");
-const path = require("path");
 const {
   default: makeWASocket,
   DisconnectReason,
@@ -10,7 +8,8 @@ const {
   Browsers
 } = require("@whiskeysockets/baileys");
 const config = require("./config");
-const { useMongoAuthState, isLinked, clearAuth } = require("./auth");
+const { useMongoAuthState, clearAuth } = require("./auth");
+const { handleMessage } = require("./handler");
 
 const app = express();
 app.use(express.json());
@@ -19,20 +18,6 @@ app.use(express.urlencoded({ extended: true }));
 let sock = null;
 let isConnected = false;
 let isConnecting = false;
-
-// Dynamic Commands loader
-const commands = new Map();
-const commandsPath = path.join(__dirname, "commands");
-
-if (fs.existsSync(commandsPath)) {
-  const files = fs.readdirSync(commandsPath).filter((file) => file.endsWith(".js"));
-  for (const file of files) {
-    const cmd = require(path.join(commandsPath, file));
-    if (cmd.name && cmd.execute) {
-      commands.set(cmd.name.toLowerCase(), cmd);
-    }
-  }
-}
 
 // 🌐 Glassmorphism Web UI
 app.get("/", (req, res) => {
@@ -216,7 +201,6 @@ app.get("/code", async (req, res) => {
       await startBotEngine();
     }
 
-    // Handshake එකට තත්පර 2ක් ලබා දී code එක request කිරීම
     setTimeout(async () => {
       try {
         let code = await sock.requestPairingCode(num);
@@ -234,7 +218,7 @@ app.get("/code", async (req, res) => {
   }
 });
 
-// 🚀 Core Engine
+// 🚀 Core WhatsApp Engine
 async function startBotEngine() {
   if (isConnecting) return;
   isConnecting = true;
@@ -247,7 +231,6 @@ async function startBotEngine() {
       version,
       logger: pino({ level: "fatal" }),
       auth: state,
-      // Official desktop Chrome fingerprint
       browser: Browsers.macOS("Chrome"),
       printQRInTerminal: false,
       syncFullHistory: false,
@@ -269,7 +252,7 @@ async function startBotEngine() {
 
         const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
         await sock.sendMessage(ownerJid, {
-          text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ WhatsApp Multi-Device Auto-Connected!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
+          text: `👑 *${config.BOT_NAME} ONLINE!*\n\n⚡ Ultra-Fast Handler Engine Active!\nType *${config.PREFIX}ping* or *${config.PREFIX}alive* to test.`
         }).catch(() => {});
       }
 
@@ -284,33 +267,16 @@ async function startBotEngine() {
           await clearAuth();
           startBotEngine();
         } else {
-          // Restart Code (515) හෝ Network drops වලදී auto reconnect වීම
           setTimeout(startBotEngine, 3000);
         }
       }
     });
 
+    // 📩 Route messages directly to handler.js
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify") return;
       const msg = messages[0];
-      if (!msg?.message || msg.key.fromMe) return;
-
-      const from = msg.key.remoteJid;
-      const body =
-        msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
-        msg.message.imageMessage?.caption ||
-        "";
-
-      if (!body.startsWith(config.PREFIX)) return;
-
-      const args = body.slice(config.PREFIX.length).trim().split(/ +/);
-      const cmdName = (args.shift() || "").toLowerCase();
-
-      const cmd = commands.get(cmdName);
-      if (cmd) {
-        cmd.execute(sock, msg, from, args).catch(console.error);
-      }
+      await handleMessage(sock, msg);
     });
 
   } catch (err) {
@@ -320,7 +286,7 @@ async function startBotEngine() {
   }
 }
 
-// Start Server
+// 🌐 Start Server
 async function main() {
   app.listen(config.PORT, () => {
     console.log(`🌐 Web UI Live on Port ${config.PORT}`);
