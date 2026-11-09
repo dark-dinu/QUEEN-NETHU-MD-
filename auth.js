@@ -67,10 +67,12 @@ async function useMongoAuthState() {
           await Promise.all(
             ids.map(async (id) => {
               let value = await readData(`${type}-${id}`);
-              if (type === "app-state-sync-key" && value) {
-                value = proto.Message.AppStateSyncKeyData.fromObject(value);
+              if (value) {
+                if (type === "app-state-sync-key") {
+                  value = proto.Message.AppStateSyncKeyData.fromObject(value);
+                }
+                data[id] = value;
               }
-              data[id] = value;
             })
           );
           return data;
