@@ -12,15 +12,17 @@ const AuthSchema = new mongoose.Schema(
 const AuthModel = mongoose.models.SessionAuth || mongoose.model("SessionAuth", AuthSchema);
 const memCache = new Map();
 
-// WhatsApp multi-device වල link වුණාම `creds.account` set වෙනවා.
-// (creds.registered කියන එක MD වල හැමවිටම true වෙන්නෙ නෑ, ඒකයි කලින් bot start වෙන්නෙ නැතුව තිබුණෙ)
 function isLinked(creds) {
-  return !!(creds && (creds.registered || creds.account));
+  return !!(creds && (creds.registered || creds.account || creds.me));
 }
 
 async function clearAuth() {
   memCache.clear();
-  await AuthModel.deleteMany({});
+  try {
+    await AuthModel.deleteMany({});
+  } catch (e) {
+    console.error("Clear auth failed:", e.message);
+  }
 }
 
 async function useMongoAuthState() {
@@ -30,7 +32,7 @@ async function useMongoAuthState() {
       const serialized = JSON.stringify(data, BufferJSON.replacer);
       await AuthModel.updateOne({ id }, { data: serialized }, { upsert: true });
     } catch (err) {
-      console.error(`Auth write failed (${id}):`, err.message);
+      console.error(`Auth write error (${id}):`, err.message);
     }
   };
 
@@ -54,7 +56,7 @@ async function useMongoAuthState() {
     } catch {}
   };
 
-  const creds = (await readData("creds")) || initAuthCreds();
+  let creds = (await readData("creds")) || initAuthCreds();
 
   return {
     state: {
