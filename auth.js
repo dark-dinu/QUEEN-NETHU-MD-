@@ -16,33 +16,45 @@ function isLinked(creds) {
   return !!(creds && (creds.registered || creds.account || creds.me));
 }
 
-async function clearAuth() {
-  memoryCache.clear();
+async function clearAuth(sessionId = "bot1") {
+  const pfx = sessionId === "bot1" ? "" : `${sessionId}_`;
+  for (const key of memoryCache.keys()) {
+    if (key.startsWith(pfx)) memoryCache.delete(key);
+  }
   try {
-    await AuthModel.deleteMany({});
+    if (sessionId === "bot1") {
+      await AuthModel.deleteMany({ id: { $not: /^bot[2-3]_/ } });
+    } else {
+      await AuthModel.deleteMany({ id: new RegExp(`^${sessionId}_`) });
+    }
   } catch (err) {
     console.error("Auth clear failed:", err.message);
   }
 }
 
-async function useMongoAuthState() {
+async function useMongoAuthState(sessionId = "bot1") {
+  // පැරණි bot1 හි Session keys පෙර තිබූ පරිදිම (prefix නොමැතිව) තබා ගනී
+  const pfx = sessionId === "bot1" ? "" : `${sessionId}_`;
+
   const writeData = async (id, data) => {
-    memoryCache.set(id, data);
+    const fullId = `${pfx}${id}`;
+    memoryCache.set(fullId, data);
     try {
       const serialized = JSON.stringify(data, BufferJSON.replacer);
-      await AuthModel.updateOne({ id }, { data: serialized }, { upsert: true });
+      await AuthModel.updateOne({ id: fullId }, { data: serialized }, { upsert: true });
     } catch (err) {
-      console.error(`Write failed (${id}):`, err.message);
+      console.error(`Write failed (${fullId}):`, err.message);
     }
   };
 
   const readData = async (id) => {
-    if (memoryCache.has(id)) return memoryCache.get(id);
+    const fullId = `${pfx}${id}`;
+    if (memoryCache.has(fullId)) return memoryCache.get(fullId);
     try {
-      const doc = await AuthModel.findOne({ id }).lean().exec();
+      const doc = await AuthModel.findOne({ id: fullId }).lean().exec();
       if (!doc) return null;
       const parsed = JSON.parse(doc.data, BufferJSON.reviver);
-      memoryCache.set(id, parsed);
+      memoryCache.set(fullId, parsed);
       return parsed;
     } catch {
       return null;
@@ -50,9 +62,10 @@ async function useMongoAuthState() {
   };
 
   const removeData = async (id) => {
-    memoryCache.delete(id);
+    const fullId = `${pfx}${id}`;
+    memoryCache.delete(fullId);
     try {
-      await AuthModel.deleteOne({ id });
+      await AuthModel.deleteOne({ id: fullId });
     } catch {}
   };
 
