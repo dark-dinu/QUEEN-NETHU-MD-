@@ -238,9 +238,8 @@ app.get("/code", async (req, res) => {
     return res.status(400).json({ error: "කරුණාකර නිවැරදි අංකය ලබා දෙන්න (උදා: 94719845166)" });
   }
 
-  // අදාළ slot එක දැනටමත් online ද යන්න පරීක්ෂා කිරීම
   if (bots[slot].connected) {
-    return res.json({ error: `${bots[slot].name} දැනටමත් සාර්ථකව WhatsApp සමඟ Link වී ඇත. කරුණාකර වෙනත් Bot Slot එකක් (Bot 2 හෝ Bot 3) තෝරන්න.` });
+    return res.json({ error: `${bots[slot].name} දැනටමත් සාර්ථකව WhatsApp සමඟ Link වී ඇත. කරුණාකර වෙනත් Bot Slot එකක් තෝරන්න.` });
   }
 
   try {
@@ -265,7 +264,7 @@ app.get("/code", async (req, res) => {
   }
 });
 
-// 🚀 Core Bot Launcher per Slot
+// 🚀 Core Bot Launcher per Slot (Anti-Waiting Message Engine)
 async function startSingleBot(slot) {
   const botData = bots[slot];
   if (botData.connecting) return;
@@ -287,7 +286,12 @@ async function startSingleBot(slot) {
       connectTimeoutMs: 60000,
       keepAliveIntervalMs: 30000,
       defaultQueryTimeoutMs: 0,
-      getMessage: async (key) => proto.Message.fromObject({})
+      // 🛠️ Stable Decryption: Returning actual container prevents Signal pre-key handshake failure
+      getMessage: async (key) => {
+        return {
+          conversation: "QUEEN_NETHU_SYNC"
+        };
+      }
     });
 
     botData.sock = sock;
@@ -299,12 +303,8 @@ async function startSingleBot(slot) {
       if (connection === "open") {
         botData.connected = true;
         botData.connecting = false;
-        console.log(`🚀 ${botData.name} Connected and Online!`);
-
-        const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
-        await sock.sendMessage(ownerJid, {
-          text: `👑 *${botData.name} ONLINE!*\n\n⚡ Multi-Session Active!\nType *${config.PREFIX}ping* to test.`
-        }).catch(() => {});
+        // Silent connect: Owner ට කිසිදු message එකක් නොයවා console log එක පමණක් යොදයි
+        console.log(`🚀 [${slot}] ${botData.name} Connected Silently!`);
       }
 
       if (connection === "close") {
@@ -314,7 +314,7 @@ async function startSingleBot(slot) {
         console.log(`[${slot}] Connection closed with code: ${statusCode}`);
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.log(`[${slot}] Logged out. Clearing data...`);
+          console.log(`[${slot}] Logged out. Clearing session...`);
           await clearAuth(slot);
           startSingleBot(slot);
         } else {
