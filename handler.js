@@ -20,6 +20,13 @@ if (fs.existsSync(commandsPath)) {
 }
 
 /**
+ * JID එකෙන් Device/LID parts ඉවත් කර Standard JID එකක් ලබා ගැනීම
+ */
+function cleanJid(jid = "") {
+  return jid.split(":")[0].split("@")[0] + "@s.whatsapp.net";
+}
+
+/**
  * Commands ඇතුළෙන් 1, 2, 3 Interactive Menu එකක් Register කරන Helper Function එක
  * @param {string} from - Chat JID
  * @param {string} sender - User JID
@@ -28,9 +35,9 @@ if (fs.existsSync(commandsPath)) {
  * @param {number} timeoutMs - Timeout කාලය (Default: තත්පර 120)
  */
 function registerReply(from, sender, msgId, actions, timeoutMs = 120000) {
-  const sessionKey = `${from}_${sender}`;
-  
-  // කලින් session එකක් තිබුණා නම් clear කිරීම
+  const senderClean = cleanJid(sender);
+  const sessionKey = `${from}_${senderClean}`;
+
   if (replySessions.has(sessionKey)) {
     clearTimeout(replySessions.get(sessionKey).timer);
   }
@@ -51,10 +58,15 @@ function registerReply(from, sender, msgId, actions, timeoutMs = 120000) {
  */
 async function handleMessage(sock, msg) {
   try {
-    if (!msg?.message || msg.key.fromMe) return;
+    if (!msg?.message) return;
 
     const from = msg.key.remoteJid;
-    const sender = msg.key.participant || from;
+    // WhatsApp Status broadcast පණිවිඩ ignore කිරීම
+    if (!from || from === "status@broadcast") return;
+
+    // Sender හඳුනා ගැනීම (Group එකක නම් participant, Private නම් remoteJid)
+    const rawSender = msg.key.participant || from;
+    const sender = cleanJid(rawSender);
 
     const body =
       msg.message.conversation ||
@@ -64,8 +76,9 @@ async function handleMessage(sock, msg) {
       "";
 
     const trimmedBody = body.trim();
+    if (!trimmedBody) return;
 
-    // Context / Quoted Message details ලබා ගැනීම
+    // Quoted reply details ලබා ගැනීම
     const contextInfo =
       msg.message.extendedTextMessage?.contextInfo ||
       msg.message.imageMessage?.contextInfo ||
@@ -79,16 +92,16 @@ async function handleMessage(sock, msg) {
     if (replySessions.has(sessionKey)) {
       const session = replySessions.get(sessionKey);
 
-      // Quoted reply එකක් නම් අදාළ msgId එකට match වීම හෝ අංකයක් පමණක් වීම
-      const isMatchingReply = !quotedMsgId || quotedMsgId === session.msgId;
+      // Quoted reply එකේ stanzaId එක match වීම හෝ user නිකම්ම 1, 2, 3 type කිරීම
+      const isMatching = !quotedMsgId || quotedMsgId === session.msgId;
 
-      if (isMatchingReply && session.actions[trimmedBody]) {
+      if (isMatching && session.actions[trimmedBody]) {
         clearTimeout(session.timer);
         replySessions.delete(sessionKey);
 
         await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
 
-        // Command එක ඇතුළේ ලියූ අදාළ function එක execute වීම
+        // Command එක ඇතුළේ register කළ function එක execute කිරීම
         await session.actions[trimmedBody](sock, msg, from);
         return;
       }
@@ -104,7 +117,6 @@ async function handleMessage(sock, msg) {
 
     const cmd = commands.get(cmdName);
     if (cmd) {
-      // Command එක ඇතුළේ registerReply පාවිච්චි කිරීමට හැකි වන පරිදි pass කිරීම
       await cmd.execute(sock, msg, from, args, { registerReply });
     }
   } catch (err) {
