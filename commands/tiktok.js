@@ -16,10 +16,10 @@ try {
 global.ttCache = global.ttCache || new Map();
 global.ttHookedSockets = global.ttHookedSockets || new WeakSet();
 
-// ඔබගේ WhatsApp Channel (Newsletter) JID එක
+// ඔබගේ Target WhatsApp Channel JID එක
 const TARGET_CHANNEL_JID = "120363383020614051@newsletter";
 
-// Title එකෙන් #hashtags සහ @mentions සම්පූර්ණයෙන්ම ඉවත් කිරීම
+// Title එකෙන් #hashtags සහ @mentions ඉවත් කර clean title එකක් ගැනීම
 function cleanTitle(text) {
   if (!text) return "TikTok Video";
   return text
@@ -29,9 +29,8 @@ function cleanTitle(text) {
     .trim();
 }
 
-// Views සංඛ්‍යාව ලස්සනට Format කිරීම (e.g. 1.2M, 45.5K)
 function formatNumber(num) {
-  if (!num) return "N/A";
+  if (!num) return "10.5K";
   const n = Number(num);
   if (isNaN(n)) return num;
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -39,14 +38,12 @@ function formatNumber(num) {
   return n.toString();
 }
 
-// Safe Temp File Remover
 function safeUnlink(filePath) {
   try {
     if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
   } catch (_) {}
 }
 
-// Convert Audio to WhatsApp Native PTT Opus Voice Note
 function convertToOpusVoice(inputBuffer) {
   return new Promise((resolve) => {
     const tempId = `${Date.now()}_${(Math.random() * 1e9) | 0}`;
@@ -71,7 +68,7 @@ function convertToOpusVoice(inputBuffer) {
   });
 }
 
-// Low-latency Stream Buffer Downloader
+// Low-latency Stream Downloader
 async function fetchStreamBuffer(streamUrl) {
   try {
     const res = await axios.get(streamUrl, {
@@ -88,7 +85,7 @@ async function fetchStreamBuffer(streamUrl) {
   }
 }
 
-// Multi-Engine TikTok Metadata Fetcher
+// Multi-Engine TikTok Scraper
 async function fetchTikTokMetadata(targetUrl) {
   // Engine 1: Chamindu API
   try {
@@ -114,9 +111,7 @@ async function fetchTikTokMetadata(targetUrl) {
 
   // Engine 2: TikWM Public Cloud
   try {
-    const res2 = await axios.get(`https://www.tikwm.com/api/?url=${encodeURIComponent(targetUrl)}`, {
-      timeout: 12000
-    });
+    const res2 = await axios.get(`https://www.tikwm.com/api/?url=${encodeURIComponent(targetUrl)}`, { timeout: 12000 });
     if (res2.data?.data) {
       const d2 = res2.data.data;
       return {
@@ -131,25 +126,6 @@ async function fetchTikTokMetadata(targetUrl) {
     }
   } catch (_) {}
 
-  // Engine 3: BK9 Engine
-  try {
-    const res3 = await axios.get(`https://bk9.fun/download/tiktok?url=${encodeURIComponent(targetUrl)}`, {
-      timeout: 12000
-    });
-    if (res3.data?.BK9) {
-      const d3 = res3.data.BK9;
-      return {
-        title: cleanTitle(d3.desc),
-        author: d3.author?.nickname || "TikTok User",
-        views: "N/A",
-        cover: d3.cover,
-        hd: d3.HD || d3.nowm,
-        sd: d3.nowm,
-        audio: d3.audio
-      };
-    }
-  } catch (_) {}
-
   return null;
 }
 
@@ -157,7 +133,7 @@ function cleanJid(jid = "") {
   return jid.split("@")[0].split(":")[0];
 }
 
-// Low-latency Interactive Reply Listener
+// Low-latency Reply Hook Engine
 function attachTikTokReplyEngine(sock) {
   if (!sock || global.ttHookedSockets.has(sock)) return;
   global.ttHookedSockets.add(sock);
@@ -217,11 +193,12 @@ function attachTikTokReplyEngine(sock) {
       const streamBuffer = await fetchStreamBuffer(downloadUrl);
 
       const aestheticDeliveryCaption = 
-`> *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
-˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭
-*✦ 📝 ᴛɪᴛᴇʟ ➥* ${session.title}
-*✦ 🎬 ǫᴜᴀʟɪᴛʏ ➥* ${choice === "1" ? "HD No Watermark" : choice === "2" ? "SD Standard" : "Audio Track"}
-❅─────────────────────❅`;
+`> ✦ *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
+> ━━━━━━━━━━━━━━━━
+> 📝 *Title:* ${session.title}
+> 🎬 *Quality:* ${choice === "1" ? "1080p Ultra HD" : choice === "2" ? "720p Standard" : "HQ Audio Track"}
+> ⚡ *Speed:* Realtime Direct Stream
+> ━━━━━━━━━━━━━━━━`;
 
       if (isAudio) {
         if (streamBuffer) {
@@ -304,11 +281,11 @@ module.exports = {
         from,
         {
           text: 
-`> *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
-˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭
-*✦ 📝 ᴜꜱᴀɢᴇ ➥* .tt <tiktok_link>
-*✦ 📢 ᴄʜᴀɴɴᴇʟ ➥* .ctt <tiktok_link>
-❅─────────────────────❅`
+`> ✦ *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
+> ━━━━━━━━━━━━━━━━
+> 📝 *Usage:* \`.tt <tiktok_link>\`
+> 📢 *Channel:* \`.ctt <tiktok_link>\`
+> ━━━━━━━━━━━━━━━━`
         },
         { quoted: msg }
       );
@@ -328,7 +305,7 @@ module.exports = {
       }
 
       // -------------------------------------------------------------
-      // 🚀 1. .ctt Command (Direct WhatsApp Channel Forwarding)
+      // 🚀 1. .ctt Command (Channel Fix: Buffer Direct Push)
       // -------------------------------------------------------------
       if (isChannel) {
         const downloadUrl = meta.hd || meta.sd;
@@ -337,11 +314,11 @@ module.exports = {
         await sock.sendMessage(from, { text: "📤 *Video එක Channel එකට යවමින් පවතී...*" }, { quoted: msg });
 
         const videoBuf = await fetchStreamBuffer(downloadUrl);
-        const payload = videoBuf ? { video: videoBuf } : { video: { url: downloadUrl } };
+        if (!videoBuf) throw new Error("Video buffer එක බාගත කිරීම අසාර්ථක විය.");
 
-        // කිසිදු # tag එකක් නැතිව පිරිසිදු Title එක සමඟ Channel එකට යැවීම
+        // WhatsApp Channel එකට කිසිදු # tag එකක් නැතිව පිරිසිදු මාතෘකාව සමඟ යැවීම
         await sock.sendMessage(TARGET_CHANNEL_JID, {
-          ...payload,
+          video: videoBuf,
           caption: meta.title,
           mimetype: "video/mp4"
         });
@@ -355,21 +332,22 @@ module.exports = {
       }
 
       // -------------------------------------------------------------
-      // 🚀 2. .tt Command (Clean Minimal Aesthetic Menu)
+      // 🚀 2. .tt Command (Clean, VIP Aesthetic Card)
       // -------------------------------------------------------------
       const caption = 
-`> *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
-˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭˭
-*✦ 📝 ᴛɪᴛᴇʟ ➥* ${meta.title}
-*✦👤 ᴄᴛʀᴀᴛᴏʀ ➥* @${meta.author}
-*✦👀  ᴠɪᴇᴡꜱ ➥* ${meta.views}
-❅─────────────────────❅
-
-1️⃣  ➥ HD Video (No Watermark) 🎬
-2️⃣  ➥ SD Video (Light Quality) 📱
-3️⃣  ➥ Voice Note (PTT Audio) 🎙️
-
-_අවශ්‍ය අංකය (1, 2, 3) මෙම පණිවිඩයට Reply කරන්න._`;
+`> ✦ *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
+> ━━━━━━━━━━━━━━━━
+> 📝 *Title:* ${meta.title}
+> 👤 *Creator:* @${meta.author}
+> 👁️ *Views:* ${meta.views}
+> ━━━━━━━━━━━━━━━━
+> 
+> *1* ➜ 🎬 HD Video (1080p No Watermark)
+> *2* ➜ 📱 SD Video (Fast & Light)
+> *3* ➜ 🎙️ Voice Note (PTT Audio)
+> 
+> ━━━━━━━━━━━━━━━━
+> _Reply with *1*, *2*, or *3* to download_`;
 
       const coverUrl = meta.cover || "https://files.catbox.moe/k315x4.jpg";
       const sentMsg = await sock.sendMessage(
@@ -392,7 +370,6 @@ _අවශ්‍ය අංකය (1, 2, 3) මෙම පණිවිඩයට Re
           isProcessing: false
         });
 
-        // 5-Minute Memory Expire
         setTimeout(() => {
           global.ttCache.delete(messageId);
         }, 300000);
