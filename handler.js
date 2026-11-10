@@ -78,30 +78,45 @@ async function handleMessage(sock, msg) {
     if (!from) return;
 
     // -------------------------------------------------------------
-    // 🌟 1. STATUS AUTO-SEEN & AUTO-REACT (🥰)
+    // 🌟 1. STATUS AUTO-SEEN & AUTO-REACT (👸🏻) - FIXED RELAY
     // -------------------------------------------------------------
     if (from === "status@broadcast") {
       // 1. Auto Seen (Mark as Read)
       await sock.readMessages([msg.key]).catch(() => {});
 
-      // 2. Auto React with 🥰
+      // 2. Auto React with 👸🏻 using relayMessage
       const participant = msg.key.participant || msg.participant;
-      if (participant) {
-        await sock.sendMessage(
-          "status@broadcast",
-          {
-            react: {
-              text: "🥰",
-              key: msg.key
+
+      if (participant && !msg.key.fromMe) {
+        try {
+          const reactionMessage = {
+            reactMessage: {
+              key: msg.key,
+              text: "👸🏻"
             }
-          },
-          { statusJidList: [participant] }
-        ).catch(() => {});
+          };
+
+          await sock.relayMessage(
+            "status@broadcast",
+            reactionMessage,
+            {
+              messageId: msg.key.id,
+              statusJidList: [participant, sock.user?.id ? sock.user.id.split(":")[0] + "@s.whatsapp.net" : participant]
+            }
+          );
+        } catch (_) {
+          try {
+            await sock.sendMessage(
+              "status@broadcast",
+              { react: { text: "👸🏻", key: msg.key } },
+              { statusJidList: [participant] }
+            );
+          } catch (_) {}
+        }
       }
       return;
     }
 
-    // Decryption message keys drop වීම වැළැක්වීම
     if (msg.message.senderKeyDistributionMessage || msg.message.protocolMessage) return;
 
     const rawSender = msg.key.participant || (msg.key.fromMe ? sock.user?.id : from);
@@ -128,7 +143,7 @@ async function handleMessage(sock, msg) {
       );
 
       if (isSaveTrigger) {
-        await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
+        await sock.sendMessage(from, { react: { text: "🥰", key: msg.key } }).catch(() => {});
 
         try {
           const statusSender = contextInfo.participant || from;
