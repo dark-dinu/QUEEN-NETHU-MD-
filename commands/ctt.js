@@ -1,11 +1,10 @@
 const axios = require("axios");
 
 const API_KEY = "chama_api_9c55e3c6d014abbdf65054f9046a920b";
-// ඔබගේ Channel Invite Code එක (https://whatsapp.com/channel/0029VbBTkLI9Gv7bXpWEmg3D)
 const CHANNEL_INVITE_CODE = "0029VbBTkLI9Gv7bXpWEmg3D";
 const FALLBACK_CHANNEL_JID = "120363383020614051@newsletter";
 
-// Title එකේ ඇති සියලුම #hashtags, @mentions සහ emojis අයින් කර පිරිසිදු කිරීම
+// Title එකේ ඇති සියලුම #hashtags සහ @mentions ඉවත් කර පිරිසිදු කිරීම
 function cleanTitle(text) {
   if (!text) return "TikTok Video";
   return text
@@ -109,10 +108,11 @@ module.exports = {
       );
     }
 
+    // Reaction & Message 1: Initial Processing Message
     await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
-    const statusMsg = await sock.sendMessage(
+    await sock.sendMessage(
       from,
-      { text: "⏳ *TikTok දත්ත ලබා ගනිමින් පවතී...*" },
+      { text: "⏳ *Processing your request... Forwarding video to Channel.*" },
       { quoted: msg }
     );
 
@@ -120,24 +120,14 @@ module.exports = {
       // 1. Data Scraping
       const data = await fetchTikTokData(url);
       if (!data || !data.videoUrl) {
-        throw new Error("TikTok Video Download Link එක ලබා ගැනීමට නොහැකි විය.");
+        throw new Error("Could not retrieve TikTok download stream.");
       }
-
-      await sock.sendMessage(from, {
-        text: "📥 *Video Buffer බාගත කරමින් පවතී...*",
-        edit: statusMsg.key
-      });
 
       // 2. Video Buffer Download
       const videoBuffer = await fetchStreamBuffer(data.videoUrl);
       if (!videoBuffer) {
-        throw new Error("Video එක Download කිරීම අසාර්ථක විය.");
+        throw new Error("Failed to download video buffer.");
       }
-
-      await sock.sendMessage(from, {
-        text: "📤 *Channel එකට Video එක Upload කරමින් පවතී...*",
-        edit: statusMsg.key
-      });
 
       // 3. Resolve Channel Newsletter JID Live
       let targetJid = FALLBACK_CHANNEL_JID;
@@ -152,32 +142,35 @@ module.exports = {
         console.log("Metadata resolve fallback to static JID:", metaErr.message);
       }
 
-      // 4. Send to Channel with clean caption (No Hashtags)
+      // 4. Send to WhatsApp Channel with English Caption (No Hashtags)
       await sock.sendMessage(targetJid, {
         video: videoBuffer,
         caption: data.title,
         mimetype: "video/mp4"
       });
 
+      // Reaction & Message 2: Final Success Message
       await sock.sendMessage(from, { react: { text: "✅", key: msg.key } }).catch(() => {});
-      return await sock.sendMessage(from, {
-        text:
-`> ✦ *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
-> ━━━━━━━━━━━━━━━━
-> ✅ *Video Forwarded Successfully!*
+      return await sock.sendMessage(
+        from,
+        {
+          text:
+`> ✅ *Video Forwarded Successfully!*
 > 📝 *Title:* ${data.title}
-> 📢 *Channel:* Active
-> ━━━━━━━━━━━━━━━━`,
-        edit: statusMsg.key
-      });
+
+> *𝗤𝗨𝗘𝗘𝗡 𝗡𝗘𝗧𝗛𝗨 👸🏻*`
+        },
+        { quoted: msg }
+      );
 
     } catch (err) {
       console.error("[CTT ERROR]:", err.message);
       await sock.sendMessage(from, { react: { text: "❌", key: msg.key } }).catch(() => {});
-      return await sock.sendMessage(from, {
-        text: `❌ *Channel එකට යැවීම අසාර්ථක විය:* (${err.message})`,
-        edit: statusMsg.key
-      });
+      return await sock.sendMessage(
+        from,
+        { text: `❌ *Failed to forward to channel:* (${err.message})` },
+        { quoted: msg }
+      );
     }
   }
 };
