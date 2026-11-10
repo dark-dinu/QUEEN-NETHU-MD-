@@ -2,9 +2,9 @@ const axios = require("axios");
 
 const API_KEY = "chama_api_9c55e3c6d014abbdf65054f9046a920b";
 const CHANNEL_INVITE_CODE = "0029VbBTkLI9Gv7bXpWEmg3D";
-const FALLBACK_CHANNEL_JID = "120363383020614051@newsletter";
+let cachedChannelJid = null;
 
-// Title එකේ ඇති සියලුම #hashtags සහ @mentions ඉවත් කර පිරිසිදු කිරීම
+// Clean Title - #tags සහ @mentions ඉවත් කිරීම
 function cleanTitle(text) {
   if (!text) return "TikTok Video";
   return text
@@ -14,20 +14,22 @@ function cleanTitle(text) {
     .trim();
 }
 
-// Media URL එක Buffer එකක් ලෙස Download කරගැනීම
+// Low-latency Stream Downloader
 async function fetchStreamBuffer(streamUrl) {
   try {
     const res = await axios.get(streamUrl, {
       responseType: "arraybuffer",
       timeout: 60000,
+      maxContentLength: 100 * 1024 * 1024,
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: "https://www.tiktok.com/"
       }
     });
     return Buffer.from(res.data);
   } catch (err) {
-    console.error("Stream Fetch Error:", err.message);
+    console.error("[STREAM FETCH ERROR]:", err.message);
     return null;
   }
 }
@@ -84,23 +86,42 @@ async function fetchTikTokData(targetUrl) {
   return null;
 }
 
+// Channel JID Live Resolution
+async function getChannelJid(sock) {
+  if (cachedChannelJid) return cachedChannelJid;
+  try {
+    if (typeof sock.newsletterMetadata === "function") {
+      const meta = await sock.newsletterMetadata("invite", CHANNEL_INVITE_CODE);
+      if (meta?.id) {
+        cachedChannelJid = meta.id.includes("@newsletter") ? meta.id : `${meta.id}@newsletter`;
+        return cachedChannelJid;
+      }
+    }
+  } catch (err) {
+    console.error("[CHANNEL META ERROR]:", err.message);
+  }
+  // Fallback direct newsletter JID
+  return "120363383020614051@newsletter";
+}
+
 module.exports = {
   name: "ctt",
   aliases: ["channeltiktok", "ttchannel"],
   description: "Download and forward TikTok video directly to WhatsApp Channel",
 
   execute: async (sock, msg, from, args) => {
-    const url = args[0]?.trim();
+    const rawText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
+    const extractUrl = args[0] || rawText.match(/https?:\/\/[^\s]+/)?.[0];
 
-    if (!url || (!url.includes("tiktok.com") && !url.includes("vt.tiktok.com"))) {
-      await sock.sendMessage(from, { react: { text: "⚠️", key: msg.key } }).catch(() => {});
+    if (!extractUrl || (!extractUrl.includes("tiktok.com") && !extractUrl.includes("vt.tiktok.com"))) {
+      sock.sendMessage(from, { react: { text: "⚠️", key: msg.key } }).catch(() => {});
       return await sock.sendMessage(
         from,
         {
           text:
 `> ✦ *𝐐𝐔𝐄𝐄𝐍 𝐍𝐄𝐓𝐇𝐔 👸🏻*
 > ━━━━━━━━━━━━━━━━
-> 📝 *Usage:* \`.ctt <tiktok_video_url>\`
+> 📝 *Usage:* \`.ctt <tiktok_url>\`
 > 📢 *Target:* WhatsApp Channel
 > ━━━━━━━━━━━━━━━━`
         },
@@ -108,8 +129,7 @@ module.exports = {
       );
     }
 
-    // Reaction & Message 1: Initial Processing Message
-    await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
+    sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
     await sock.sendMessage(
       from,
       { text: "⏳ *Processing your request... Forwarding video to Channel.*" },
@@ -117,40 +137,27 @@ module.exports = {
     );
 
     try {
-      // 1. Data Scraping
-      const data = await fetchTikTokData(url);
+      const data = await fetchTikTokData(extractUrl.trim());
       if (!data || !data.videoUrl) {
         throw new Error("Could not retrieve TikTok download stream.");
       }
 
-      // 2. Video Buffer Download
       const videoBuffer = await fetchStreamBuffer(data.videoUrl);
       if (!videoBuffer) {
         throw new Error("Failed to download video buffer.");
       }
 
-      // 3. Resolve Channel Newsletter JID Live
-      let targetJid = FALLBACK_CHANNEL_JID;
-      try {
-        if (typeof sock.newsletterMetadata === "function") {
-          const meta = await sock.newsletterMetadata("invite", CHANNEL_INVITE_CODE);
-          if (meta?.id) {
-            targetJid = meta.id;
-          }
-        }
-      } catch (metaErr) {
-        console.log("Metadata resolve fallback to static JID:", metaErr.message);
-      }
+      const targetJid = await getChannelJid(sock);
 
-      // 4. Send to WhatsApp Channel with English Caption (No Hashtags)
+      // Baileys Newsletter Video Delivery
       await sock.sendMessage(targetJid, {
         video: videoBuffer,
         caption: data.title,
-        mimetype: "video/mp4"
+        mimetype: "video/mp4",
+        fileName: "tiktok.mp4"
       });
 
-      // Reaction & Message 2: Final Success Message
-      await sock.sendMessage(from, { react: { text: "✅", key: msg.key } }).catch(() => {});
+      sock.sendMessage(from, { react: { text: "✅", key: msg.key } }).catch(() => {});
       return await sock.sendMessage(
         from,
         {
@@ -164,8 +171,8 @@ module.exports = {
       );
 
     } catch (err) {
-      console.error("[CTT ERROR]:", err.message);
-      await sock.sendMessage(from, { react: { text: "❌", key: msg.key } }).catch(() => {});
+      console.error("[CTT EXECUTION ERROR]:", err);
+      sock.sendMessage(from, { react: { text: "❌", key: msg.key } }).catch(() => {});
       return await sock.sendMessage(
         from,
         { text: `❌ *Failed to forward to channel:* (${err.message})` },
