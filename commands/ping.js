@@ -1,14 +1,31 @@
 module.exports = {
   name: "ping",
-  description: "Check real bot response speed",
-  execute: async (sock, msg, from) => {
-    // WhatsApp server එකෙන් message එක ලැබුණු timestamp එක හරහා real latency එක ගණනය කිරීම
-    const messageTimestamp = (msg.messageTimestamp || Math.floor(Date.now() / 1000)) * 1000;
-    const latency = Math.max(0, Date.now() - messageTimestamp);
+  aliases: ["speed", "p"],
+  description: "Check bot realtime response speed",
 
-    await sock.sendMessage(
+  execute: async (sock, msg, from) => {
+    // 1. Message එක WhatsApp Server එකෙන් ආ වෙලාව සහ දැන් වෙලාව අතර වෙනස (Real Latency)
+    const startTimestamp = (msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now());
+    const realSpeed = Math.max(1, Date.now() - startTimestamp);
+
+    // 2. Reaction එකක් එක් කිරීම
+    await sock.sendMessage(from, { react: { text: "💗", key: msg.key } }).catch(() => {});
+
+    // 3. Edit නොවී එකවරම Real Latency එක සහිතව Message එක යැවීම
+    const pingText = 
+`> *👸🏻⃝🌸 QUEEN NETHU — PING*
+
+> *🕊️ ᴘᴏɴɢ! ᴍʏ ᴋɪɴɢ ♡*
+> ╭━━━〔 ✧ᴘɪɴɢ ɪɴꜰᴏ✧ 〕━━━╮
+> ┃ ✦ Speed : *${realSpeed} ms*
+> ┃ ✦ Status : *Online 🟢*
+> ┃ ✦ Bot : 𝚀𝚄𝚎𝚎𝙽 𝙽𝚎𝚃𝙷𝚄
+> ╰━━━━━━━━━━━━━━━━━━╯
+*♡ ᴍᴀᴅᴇ ᴡɪᴛʜ ʜᴇꜱʜᴀɴ ♡*`;
+
+    return await sock.sendMessage(
       from,
-      { text: `\`\`\`𝗽𝗼𝗻𝗴 ${latency}𝗺𝘀 📍\`\`\`` },
+      { text: pingText },
       { quoted: msg }
     );
   }
