@@ -7,7 +7,7 @@ const config = require("./config");
 const commands = new Map();
 const commandsPath = path.join(__dirname, "commands");
 
-// 🎯 Interactive Reply Sessions
+// 🎯 Interactive Reply Sessions (1, 2, 3 menus)
 const replySessions = new Map();
 
 if (fs.existsSync(commandsPath)) {
@@ -78,21 +78,30 @@ async function handleMessage(sock, msg) {
     if (!from) return;
 
     // -------------------------------------------------------------
-    // 🌟 1. STATUS AUTO-SEEN & AUTO-REACT (👸🏻) - FIXED RELAY
+    // 🌟 1. STATUS AUTO-SEEN & 100% RELIABLE AUTO-REACT (🥰)
     // -------------------------------------------------------------
     if (from === "status@broadcast") {
+      const participant = msg.key.participant || msg.participant;
+
       // 1. Auto Seen (Mark as Read)
       await sock.readMessages([msg.key]).catch(() => {});
 
-      // 2. Auto React with 👸🏻 using relayMessage
-      const participant = msg.key.participant || msg.participant;
-
+      // 2. Auto React with 🥰 (Multi-Device Signal Payload)
       if (participant && !msg.key.fromMe) {
         try {
+          const userClean = participant.split(":")[0].split("@")[0] + "@s.whatsapp.net";
+          const botClean = sock.user?.id ? sock.user.id.split(":")[0].split("@")[0] + "@s.whatsapp.net" : null;
+
           const reactionMessage = {
-            reactMessage: {
-              key: msg.key,
-              text: "👸🏻"
+            reactionMessage: {
+              key: {
+                remoteJid: "status@broadcast",
+                id: msg.key.id,
+                participant: participant,
+                fromMe: false
+              },
+              text: "🥰",
+              senderTimestampMs: Date.now()
             }
           };
 
@@ -101,14 +110,23 @@ async function handleMessage(sock, msg) {
             reactionMessage,
             {
               messageId: msg.key.id,
-              statusJidList: [participant, sock.user?.id ? sock.user.id.split(":")[0] + "@s.whatsapp.net" : participant]
+              statusJidList: botClean ? [participant, userClean, botClean] : [participant, userClean]
             }
           );
         } catch (_) {
           try {
             await sock.sendMessage(
               "status@broadcast",
-              { react: { text: "👸🏻", key: msg.key } },
+              {
+                react: {
+                  text: "🥰",
+                  key: {
+                    remoteJid: "status@broadcast",
+                    id: msg.key.id,
+                    participant: participant
+                  }
+                }
+              },
               { statusJidList: [participant] }
             );
           } catch (_) {}
@@ -143,7 +161,7 @@ async function handleMessage(sock, msg) {
       );
 
       if (isSaveTrigger) {
-        await sock.sendMessage(from, { react: { text: "🥰", key: msg.key } }).catch(() => {});
+        await sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
 
         try {
           const statusSender = contextInfo.participant || from;
@@ -155,7 +173,7 @@ async function handleMessage(sock, msg) {
 > 👤 *Status From:* @${cleanSenderNum}
 > ━━━━━━━━━━━━━━━━`;
 
-          // Image Status Download & Send
+          // Image Status
           if (quotedMessage.imageMessage) {
             const buffer = await downloadMediaMessage(
               { message: quotedMessage, key: { id: contextInfo.stanzaId, remoteJid: "status@broadcast" } },
@@ -174,7 +192,7 @@ async function handleMessage(sock, msg) {
               { quoted: msg }
             );
           }
-          // Video Status Download & Send
+          // Video Status
           else if (quotedMessage.videoMessage) {
             const buffer = await downloadMediaMessage(
               { message: quotedMessage, key: { id: contextInfo.stanzaId, remoteJid: "status@broadcast" } },
@@ -194,7 +212,7 @@ async function handleMessage(sock, msg) {
               { quoted: msg }
             );
           }
-          // Text Status Send
+          // Text Status
           else if (quotedMessage.conversation || quotedMessage.extendedTextMessage?.text) {
             const textContent = quotedMessage.conversation || quotedMessage.extendedTextMessage?.text;
             await sock.sendMessage(
