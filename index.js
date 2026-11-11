@@ -16,6 +16,9 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Global Active Sockets Pool for background modules (Status watcher, etc.)
+global.activeSockets = global.activeSockets || new Set();
+
 // Multi-bot memory pool
 const bots = {
   bot1: { sock: null, connected: false, connecting: false, name: "Bot 1 (Primary)" },
@@ -23,7 +26,7 @@ const bots = {
   bot3: { sock: null, connected: false, connecting: false, name: "Bot 3 (Third Slot)" }
 };
 
-// 🌐 Multi-Bot Web UI (Hard Reload Friendly)
+// 🌐 Multi-Bot Web UI
 app.get("/", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.send(`
@@ -264,7 +267,7 @@ app.get("/code", async (req, res) => {
   }
 });
 
-// 🚀 Core Bot Launcher per Slot (Anti-Waiting Message Engine)
+// 🚀 Core Bot Launcher per Slot
 async function startSingleBot(slot) {
   const botData = bots[slot];
   if (botData.connecting) return;
@@ -286,15 +289,15 @@ async function startSingleBot(slot) {
       connectTimeoutMs: 60000,
       keepAliveIntervalMs: 30000,
       defaultQueryTimeoutMs: 0,
-      // 🛠️ Stable Decryption: Returning actual container prevents Signal pre-key handshake failure
+      // 🛠️ Fixed: Return an empty proto container instead of literal text to stop sync spam
       getMessage: async (key) => {
-        return {
-          conversation: "QUEEN_NETHU_SYNC"
-        };
+        return proto.Message.fromObject({});
       }
     });
 
     botData.sock = sock;
+    global.activeSockets.add(sock);
+
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", async (update) => {
@@ -303,13 +306,14 @@ async function startSingleBot(slot) {
       if (connection === "open") {
         botData.connected = true;
         botData.connecting = false;
-        // Silent connect: Owner ට කිසිදු message එකක් නොයවා console log එක පමණක් යොදයි
         console.log(`🚀 [${slot}] ${botData.name} Connected Silently!`);
       }
 
       if (connection === "close") {
         botData.connected = false;
         botData.connecting = false;
+        global.activeSockets.delete(sock);
+
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         console.log(`[${slot}] Connection closed with code: ${statusCode}`);
 
