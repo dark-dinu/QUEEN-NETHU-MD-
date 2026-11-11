@@ -175,7 +175,7 @@ function attachTikTokReplyEngine(sock) {
     session.isProcessing = true;
     global.ttCache.delete(quotedId);
 
-    sock.sendMessage(from, { react: { text: "⚡", key: m.key } }).catch(() => {});
+    sock.sendMessage(from, { react: { text: "🌸", key: m.key } }).catch(() => {});
 
     try {
       let downloadUrl = "";
@@ -291,7 +291,7 @@ module.exports = {
       );
     }
 
-    sock.sendMessage(from, { react: { text: "⏳", key: msg.key } }).catch(() => {});
+    sock.sendMessage(from, { react: { text: "🌸", key: msg.key } }).catch(() => {});
 
     try {
       const meta = await fetchTikTokMetadata(url);
@@ -341,11 +341,11 @@ module.exports = {
 > 👤 *Creator:* @${meta.author}
 > 👁️ *Views:* ${meta.views}
 > ━━━━━━━━━━━━━━━━
-> 
+ 
 > *1* ➜ 🎬 HD Video (1080p No Watermark)
 > *2* ➜ 📱 SD Video (Fast & Light)
 > *3* ➜ 🎙️ Voice Note (PTT Audio)
-> 
+
 > ━━━━━━━━━━━━━━━━
 > _Reply with *1*, *2*, or *3* to download_`;
 
